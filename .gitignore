@@ -1,0 +1,6 @@
+.env
+*.txt
+
+*.exe
+
+repomix-output.xml
