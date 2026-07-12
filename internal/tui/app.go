@@ -6,96 +6,102 @@ import (
 	"github.com/vishnuprasad2004/argus/internal/tui/screens"
 )
 
-// Screen constants — which screen is active
 type Screen int
 
 const (
 	ScreenWelcome Screen = iota
 	ScreenSourceSelect
 	ScreenContainerSelect
-	ScreenChat
+	ScreenProcessSetup   // ← was missing
 	ScreenProcessChat
+	ScreenChat
 )
 
-// RootModel is the top-level bubbletea model
-// Think of it like the root component in React
 type RootModel struct {
-	screen Screen // which screen is showing
-	width  int    // terminal width — passed to all screens
-	height int    // terminal height
+	screen int
+	width  int
+	height int
 
-	// sub-models — one per screen
 	welcome         screens.WelcomeModel
 	sourceSelect    screens.SourceSelectModel
 	containerSelect screens.ContainerSelectModel
-	chat            screens.ChatModel
+	processSetup    screens.ProcessSetupModel  // ← was missing
 	processChat     screens.ProcessChatModel
+	chat            screens.ChatModel
 	llm             *googleai.GoogleAI
 }
 
 func NewRootModel(llm *googleai.GoogleAI) RootModel {
 	return RootModel{
-		screen:  ScreenWelcome,
+		screen:  int(ScreenWelcome),
 		welcome: screens.NewWelcomeModel(),
 		llm:     llm,
 	}
 }
 
-// Init runs once on startup
 func (m RootModel) Init() tea.Cmd {
-    return tea.Batch(
-        m.welcome.Init(),
-        tea.WindowSize(), // ← this fires a real WindowSizeMsg immediately on start
-    )
+	return tea.Batch(
+		m.welcome.Init(),
+		tea.WindowSize(),
+	)
 }
 
-// Update handles all messages — routes to active screen
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
-	// terminal resize — update dimensions everywhere
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width  = msg.Width
 		m.height = msg.Height
-		if m.screen == ScreenChat {
-        newModel, cmd := m.chat.Update(msg)
-        m.chat = newModel.(screens.ChatModel)
-        return m, cmd
-    }
+		// forward resize to whichever screen is active
+		switch Screen(m.screen) {
+		case ScreenChat:
+			newModel, cmd := m.chat.Update(msg)
+			m.chat = newModel.(screens.ChatModel)
+			return m, cmd
+		case ScreenProcessChat:
+			newModel, cmd := m.processChat.Update(msg)
+			m.processChat = newModel.(screens.ProcessChatModel)
+			return m, cmd
+		}
+		return m, nil
 
-	case screens.SwitchToProcessChat:
-    m.screen = ScreenProcessChat
-    m.processChat = screens.NewProcessChatModel(msg.Command, m.llm)
-    return m, m.processChat.Init()
-
-	// ctrl+c anywhere = quit
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 
-		// screen transition messages — screens tell root to switch
-		// in RootModel.Update, add this case alongside existing switch cases:
+	// ── screen transitions ────────────────────────────────────────────
+
 	case screens.SwitchToSourceSelect:
-		m.screen = ScreenSourceSelect
+		m.screen = int(ScreenSourceSelect)
 		m.sourceSelect = screens.NewSourceSelectModel()
 		return m, m.sourceSelect.Init()
 
 	case screens.SwitchToContainerSelect:
-		m.screen = ScreenContainerSelect
+		// ← THE KEY FIX — route process separately
+		if msg.Source == "process" {
+			m.screen = int(ScreenProcessSetup)
+			m.processSetup = screens.NewProcessSetupModel()
+			return m, m.processSetup.Init()
+		}
+		m.screen = int(ScreenContainerSelect)
 		m.containerSelect = screens.NewContainerSelectModel(msg.Source)
 		return m, m.containerSelect.Init()
 
+	case screens.SwitchToProcessChat:
+		m.screen = int(ScreenProcessChat)
+		m.processChat = screens.NewProcessChatModel(msg.Command, m.llm)
+		return m, m.processChat.Init()
+
 	case screens.SwitchToChat:
-		m.screen = ScreenChat
-		// msg.Target is already docker.ContainerTarget — no assertion needed
+		m.screen = int(ScreenChat)
 		m.chat = screens.NewChatModel(msg.Target, m.llm)
 		return m, m.chat.Init()
-
 	}
 
-	// delegate update to active screen
-	switch m.screen {
+	// ── delegate to active screen ─────────────────────────────────────
+
+	switch Screen(m.screen) {
 	case ScreenWelcome:
 		newModel, cmd := m.welcome.Update(msg)
 		m.welcome = newModel.(screens.WelcomeModel)
@@ -111,10 +117,15 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.containerSelect = newModel.(screens.ContainerSelectModel)
 		return m, cmd
 
+	case ScreenProcessSetup:  // ← was missing
+		newModel, cmd := m.processSetup.Update(msg)
+		m.processSetup = newModel.(screens.ProcessSetupModel)
+		return m, cmd
+
 	case ScreenProcessChat:
-    newModel, cmd := m.processChat.Update(msg)
-    m.processChat = newModel.(screens.ProcessChatModel)
-    return m, cmd
+		newModel, cmd := m.processChat.Update(msg)
+		m.processChat = newModel.(screens.ProcessChatModel)
+		return m, cmd
 
 	case ScreenChat:
 		newModel, cmd := m.chat.Update(msg)
@@ -125,17 +136,18 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the active screen
 func (m RootModel) View() string {
-	switch m.screen {
+	switch Screen(m.screen) {
 	case ScreenWelcome:
 		return m.welcome.View()
 	case ScreenSourceSelect:
 		return m.sourceSelect.View()
 	case ScreenContainerSelect:
 		return m.containerSelect.View()
+	case ScreenProcessSetup:  // ← was missing
+		return m.processSetup.View()
 	case ScreenProcessChat:
-    return m.processChat.View()
+		return m.processChat.View()
 	case ScreenChat:
 		return m.chat.View()
 	}

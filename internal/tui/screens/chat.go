@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tmc/langchaingo/llms/googleai"
 	"github.com/vishnuprasad2004/argus/agents"
@@ -42,7 +43,14 @@ type ChatModel struct {
 	// state
 	target  docker.ContainerTarget
 	orch    *agents.Orchestrator
-	answers []string
+
+
+	answerVP      viewport.Model
+	answerContent []string  // raw strings, re-rendered into viewport
+	answerReady   bool
+  
+	// to manage which panel is focused for keyboard input when scrolling
+	focusedPanel int // 0 = logs, 1 = answers
 
 	// live stream channels — set when streamStartedMsg arrives
 	liveCh    <-chan agents.LogEntry
@@ -140,11 +148,13 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.queryBar.Enable()
     if msg.err != nil {
         errLine := styles.LogError.Render("✗ Error: " + msg.err.Error())
-        m.answers = append(m.answers, errLine)
+        m.answerContent = append(m.answerContent, errLine)
+        m.refreshAnswerVP()
     } else {
         rendered := styles.RenderMarkdown(msg.result, m.width-4)
         answer := styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
-        m.answers = append(m.answers, answer)
+        m.answerContent = append(m.answerContent, answer)
+        m.refreshAnswerVP()
     }
     m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
     return m, nil
@@ -154,6 +164,7 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case components.AgentEventMsg:
 		cmd := m.thinking.Update(msg)
 		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmd, m.watchOrchestratorEvents())
 
 	// user submitted query or preset command
 	case components.QuerySubmitMsg:
@@ -162,6 +173,9 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// keyboard shortcuts
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "tab":
+			m.focusedPanel = (m.focusedPanel + 1) % 2 // toggle between 0 and 1
+			return m, nil
 		case "esc":
 			m.cancel()
 			return m, func() tea.Msg { return SwitchToSourceSelect{} }
@@ -169,10 +183,20 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// forward remaining messages to sub-components
-	if m.logViewer != nil {
-		logCmd := m.logViewer.Update(msg)
-		cmds    = append(cmds, logCmd)
+	// route scroll events to the focused panel
+	if m.focusedPanel == 0 {
+			if m.logViewer != nil {
+					logCmd := m.logViewer.Update(msg)
+					cmds = append(cmds, logCmd)
+			}
+	} else {
+			if m.answerReady {
+					var cmd tea.Cmd
+					m.answerVP, cmd = m.answerVP.Update(msg)
+					cmds = append(cmds, cmd)
+			}
 	}
+
 	queryCmd    := m.queryBar.Update(msg)
 	thinkingCmd := m.thinking.Update(msg)
 	cmds = append(cmds, queryCmd, thinkingCmd)
@@ -235,7 +259,8 @@ func (m ChatModel) waitForNextLog() tea.Cmd {
 func (m ChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 	userLine := styles.Brand.Render("❯ you") + "\n" +
         styles.WrapText(msg.Input, m.width-4)
-	m.answers = append(m.answers, userLine)
+	m.answerContent = append(m.answerContent, userLine)
+	m.refreshAnswerVP()
 
 	if msg.IsPreset {
 		switch msg.Input {
@@ -251,7 +276,8 @@ func (m ChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 			return func() tea.Msg { return queryResultMsg{result: result} }
 
 		case "/clear":
-			m.answers = nil
+			m.answerContent = nil
+			m.refreshAnswerVP()
 			return nil
 
 		case "/quit":
@@ -298,61 +324,93 @@ func (m ChatModel) watchOrchestratorEvents() tea.Cmd {
 // ── layout ────────────────────────────────────────────────────────────────
 
 func (m *ChatModel) relayout() {
-	logHeight := int(float64(m.height) * 0.65)
+    // split height into two panels
+    logHeight    := int(float64(m.height) * 0.45)
+    answerHeight := int(float64(m.height) * 0.35)
 
-	if m.logViewer == nil {
-		// first time — create viewer with correct dimensions
-		lv := components.NewLogViewer(m.width-4, logHeight)
-		m.logViewer = &lv
-	} else {
-		// terminal resized — update dimensions
-		m.logViewer.Resize(m.width-4, logHeight)
-	}
+    // log viewer
+    if m.logViewer == nil {
+        lv := components.NewLogViewer(m.width-4, logHeight)
+        m.logViewer = &lv
+    } else {
+        m.logViewer.Resize(m.width-4, logHeight)
+    }
+
+    // answer viewport
+    if !m.answerReady {
+        m.answerVP    = viewport.New(m.width-4, answerHeight)
+        m.answerReady = true
+    } else {
+        m.answerVP.Width  = m.width - 4
+        m.answerVP.Height = answerHeight
+    }
+}
+
+// call this every time answerContent changes
+func (m *ChatModel) refreshAnswerVP() {
+    content := strings.Join(m.answerContent, "\n\n")
+    m.answerVP.SetContent(content)
+    m.answerVP.GotoBottom() // auto scroll to latest answer
 }
 
 // ── view ──────────────────────────────────────────────────────────────────
 
 func (m ChatModel) View() string {
-    if m.width == 0 || m.logViewer == nil {
-        return "\n  " + styles.Muted.Render("initializing...")
-    }
+	if m.width == 0 || m.logViewer == nil {
+		return "\n  " + styles.Muted.Render("initializing...")
+	}
 
-    var b strings.Builder
+	var b strings.Builder
 
-    // ── header — one line, no box ─────────────────────────────────────
-    dot    := styles.StatusDot(m.target.Status == "running")
-    source := styles.Brand.Render("argus")
-    name   := styles.Title.Render(m.target.Name)
-    image  := styles.Muted.Render(m.target.Image)
-    keys   := styles.Muted.Render("esc back  /stats /clear /quit")
-    header := fmt.Sprintf("  %s  %s %s  %s  %s\n",
-        source, dot, name, image, keys)
-    b.WriteString(header)
-    b.WriteString(styles.HRuleStr(m.width) + "\n")
+	// ── header ────────────────────────────────────────────────────────
+	dot    := styles.StatusDot(m.target.Status == "running")
+	header := fmt.Sprintf("  %s  %s %s  %s  %s\n",
+		styles.Brand.Render("argus"),
+		dot,
+		styles.Title.Render(m.target.Name),
+		styles.Muted.Render(m.target.Image),
+		styles.Muted.Render("tab: switch panel  esc: back  /stats /clear /quit"),
+	)
+	b.WriteString(header)
 
-    // ── log panel ─────────────────────────────────────────────────────
-    b.WriteString(m.logViewer.View())
-    b.WriteString("\n")
-    b.WriteString(styles.HRuleStr(m.width) + "\n")
+	// ── log panel — orange rule when focused ──────────────────────────
+	if m.focusedPanel == 0 {
+		b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
+	} else {
+		b.WriteString(styles.HRuleStr(m.width) + "\n")
+	}
+	b.WriteString(m.logViewer.View())
+	b.WriteString("\n")
 
-    // ── conversation answers ──────────────────────────────────────────
-    if len(m.answers) > 0 {
-        b.WriteString("\n")
-        b.WriteString(strings.Join(m.answers, "\n\n"))
-        b.WriteString("\n\n")
-        b.WriteString(styles.HRuleStr(m.width) + "\n")
-    }
+	// ── answer panel — orange rule when focused ───────────────────────
+	if m.focusedPanel == 1 {
+		b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
+	} else {
+		b.WriteString(styles.HRuleStr(m.width) + "\n")
+	}
 
-    // ── thinking indicator ────────────────────────────────────────────
-    thinking := m.thinking.View()
-    if thinking != "" {
-        b.WriteString(thinking + "\n")
-    }
+	if m.answerReady {
+		if len(m.answerContent) == 0 {
+			b.WriteString("  " + styles.Muted.Render("ask a question below...") + "\n")
+		} else {
+			b.WriteString(m.answerVP.View())
+			b.WriteString("\n")
+		}
+	}
 
-    // ── query input ───────────────────────────────────────────────────
-    b.WriteString("\n")
-    b.WriteString(m.queryBar.View())
-    b.WriteString("\n")
+	b.WriteString(styles.HRuleStr(m.width) + "\n")
 
-    return b.String()
+	// ── thinking indicator ────────────────────────────────────────────
+	if t := m.thinking.View(); t != "" {
+		b.WriteString(t + "\n")
+	}
+
+	// ── query bar ─────────────────────────────────────────────────────
+	b.WriteString("\n" + m.queryBar.View() + "\n")
+
+	// ── scroll hint ───────────────────────────────────────────────────
+	focused := map[int]string{0: "logs", 1: "answers"}[m.focusedPanel]
+	b.WriteString(styles.Muted.Render("  ↑↓ scroll  focused: "+focused) + "\n")
+
+	return b.String()
 }
