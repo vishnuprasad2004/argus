@@ -27,6 +27,7 @@ var (
     Base = lipgloss.NewStyle().Foreground(ColorText)
     Muted = lipgloss.NewStyle().Foreground(ColorMuted)
     Subtle = lipgloss.NewStyle().Foreground(ColorSubtle)
+    Link = lipgloss.NewStyle().Foreground(ColorBlue).Underline(true).Italic(true)
 
     // used for section headers like "◆ Argus"
     Brand = lipgloss.NewStyle().
@@ -34,7 +35,7 @@ var (
         Bold(true)
 
     Title = lipgloss.NewStyle().
-        Foreground(ColorText).
+        Foreground(ColorPrimary).
         Bold(true)
 )
 

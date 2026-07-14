@@ -54,9 +54,11 @@ func (m WelcomeModel) View() string {
 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚══════╝`)
 
     version := styles.Muted.Render("v0.1.0 — AI-powered log analysis")
+		link := styles.Link.Render("https://github.com/vishnuprasad2004/argus")
+		short_description := styles.Muted.Render("Welcome to Argus! This tool helps you analyze logs using AI through your CLI itself.\nYou can check out the source code at ") + link
 
-    tip := styles.Muted.Render("press enter to continue")
+    tip := styles.Muted.Render("Press [enter] to continue ...")
 
     // no box, no border — just text, aligned left
-    return fmt.Sprintf("\n  %s  %s\n\n  %s\n", banner, version, tip)
+    return fmt.Sprintf("\n  %s  \n%s\n%s\n\n  %s\n", banner, version, short_description, tip)
 }
