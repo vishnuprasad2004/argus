@@ -1,13 +1,7 @@
 package main
 
-import (
-	"fmt"
-	"os"
+import "github.com/vishnuprasad2004/argus/cmd"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/vishnuprasad2004/argus/agents"
-	"github.com/vishnuprasad2004/argus/internal/tui"
-)
 
 // // func main() {
 // // 	fmt.Println(`
@@ -433,20 +427,24 @@ import (
 //     }
 // }
 
-func main() {
-    llm, err := agents.CreateAgent()
-    if err != nil {
-        fmt.Printf("Failed to init Gemini: %v\n", err)
-        os.Exit(1)
-    }
+// func main() {
+//     llm, err := agents.CreateAgent()
+//     if err != nil {
+//         fmt.Printf("Failed to init Gemini: %v\n", err)
+//         os.Exit(1)
+//     }
 
-    p := tea.NewProgram(
-        tui.NewRootModel(llm),
-        tea.WithAltScreen(),
-        tea.WithMouseCellMotion(),
-    )
-    if _, err := p.Run(); err != nil {
-        fmt.Printf("Error: %v\n", err)
-        os.Exit(1)
-    }
+//     p := tea.NewProgram(
+//         tui.NewRootModel(llm),
+//         tea.WithAltScreen(),
+//         tea.WithMouseCellMotion(),
+//     )
+//     if _, err := p.Run(); err != nil {
+//         fmt.Printf("Error: %v\n", err)
+//         os.Exit(1)
+//     }
+// }
+
+func main() {
+	cmd.Execute()
 }
