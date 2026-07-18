@@ -3,7 +3,7 @@ package agents
 import (
 	"context"
 	"os"
-	"github.com/subosito/gotenv"
+	"fmt"
 	"github.com/tmc/langchaingo/llms/googleai"
 )
 
@@ -55,8 +55,10 @@ import (
 
 
 func CreateAgent() (*googleai.GoogleAI, error) {
-	gotenv.Load();
 	api_key := os.Getenv("GEMINI_API_KEY");
+	if api_key == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY not set. Please set it in your environment variables.")
+	}
 	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(api_key), googleai.WithDefaultModel("gemini-2.5-flash-lite"));
 	if err != nil {
 		return nil, err
