@@ -2,7 +2,7 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tmc/langchaingo/llms/googleai"
+	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/tui/screens"
 )
 
@@ -28,10 +28,10 @@ type RootModel struct {
 	processSetup    screens.ProcessSetupModel  // ← was missing
 	processChat     screens.ProcessChatModel
 	chat            screens.ChatModel
-	llm             *googleai.GoogleAI
+	llm             *agents.GeminiClient
 }
 
-func NewRootModel(llm *googleai.GoogleAI) RootModel {
+func NewRootModel(llm *agents.GeminiClient) RootModel {
 	return RootModel{
 		screen:  int(ScreenWelcome),
 		welcome: screens.NewWelcomeModel(),

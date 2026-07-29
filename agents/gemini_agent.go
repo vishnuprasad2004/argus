@@ -2,66 +2,98 @@ package agents
 
 import (
 	"context"
-	"os"
 	"fmt"
-	"github.com/tmc/langchaingo/llms/googleai"
+	"google.golang.org/genai"
+	"github.com/vishnuprasad2004/argus/internal/config"	
 )
 
+// Client wraps the official Google Gemini SDK
+// replaces the LangChainGo googleai.GoogleAI
+type GeminiClient struct {
+	client *genai.Client
+	model  string
+}
 
-// func CreateAgent ()  {
-// 	gotenv.Load();
-// 	api_key := os.Getenv("GEMINI_API_KEY")
-// 	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(api_key), googleai.WithDefaultModel("gemini-2.5-flash"));
-// 	if err != nil {
-//     fmt.Printf("Error while loading the LLM model: %v\n", err)
-//     return
-// 	}
-
-
-
-// 	// answer, err := llm.GenerateContent(context.Background(),
-// 	// 	[]llms.MessageContent{
-// 	// 		llms.TextParts(
-// 	// 		llms.ChatMessageTypeHuman,
-// 	// 		"Explain Kubernetes CrashLoopBackOff",
-// 	// 		),
-// 	// 	}, 
-// 	// 	llms.WithStreamingFunc(
-// 	// 		func(ctx context.Context, chunk []byte) error {
-// 	// 			fmt.Print(string(chunk))
-// 	// 			return nil
-// 	// 		}),
-// 	// );
-// 	// if err != nil {
-//   //   fmt.Printf("Error while fetching the LLM response: %v\n", err)
-//   //   return
-// 	// }
-// 	// fmt.Println("\n\nDone!")
-// 	// _ = answer
-// 	answer, err := llms.GenerateFromSinglePrompt(
-// 	context.Background(),
-// 	llm,
-// 	"Explain Kubernetes CrashLoopBackOff for CLI tool, so please don't use markdown format",
-// )
-
-// if err != nil {
-// 	fmt.Printf("Error: %v\n", err)
-// 	return
-// }
-
-// fmt.Println(answer)
-
-// }
-
-
-func CreateAgent() (*googleai.GoogleAI, error) {
-	api_key := os.Getenv("GEMINI_API_KEY");
-	if api_key == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY not set. Please set it in your environment variables.")
+func CreateAgent(cfg *config.Config) (*GeminiClient, error) {
+	if cfg.GeminiAPIKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY not set")
 	}
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(api_key), googleai.WithDefaultModel("gemini-2.5-flash-lite"));
+
+	// Default fallback model if empty in config
+	model := cfg.Model
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+	
+	apiKey := cfg.GeminiAPIKey
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY not set")
+	}
+
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
 	}
-	return llm, nil
+
+	return &GeminiClient{
+		client: client,
+		model: model, // fast, free tier, stable
+	}, nil
+}
+
+// Generate is a simple single-turn call — used by sub-agents
+func (g *GeminiClient) Generate(ctx context.Context, prompt string) (string, error) {
+	result, err := g.client.Models.GenerateContent(ctx,
+		g.model,
+		genai.Text(prompt),
+		nil,
+	)
+	if err != nil {
+		return "", fmt.Errorf("generate: %w", err)
+	}
+	return result.Text(), nil
+}
+
+// Chat is a multi-turn call with history — used by orchestrator
+func (g *GeminiClient) Chat(ctx context.Context, system string, history []ConversationTurn, userMsg string) (string, error) {
+	// build content history
+	var contents []*genai.Content
+
+	for _, turn := range history {
+		role := genai.RoleUser
+		if turn.Role == "assistant" {
+			role = genai.RoleModel
+		}
+		contents = append(contents, &genai.Content{
+			Role:  role,
+			Parts: []*genai.Part{genai.NewPartFromText(turn.Content)},
+		})
+	}
+
+	// add current user message
+	contents = append(contents, &genai.Content{
+		Role:  genai.RoleUser,
+		Parts: []*genai.Part{genai.NewPartFromText(userMsg)},
+	})
+
+	// system instruction goes on the model config
+	cfg := &genai.GenerateContentConfig{
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{genai.NewPartFromText(system)},
+		},
+	}
+
+	result, err := g.client.Models.GenerateContent(ctx,
+		g.model,
+		contents,
+		cfg,
+	)
+	if err != nil {
+		return "", fmt.Errorf("chat: %w", err)
+	}
+	return result.Text(), nil
 }

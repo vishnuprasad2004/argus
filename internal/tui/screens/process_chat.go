@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tmc/langchaingo/llms/googleai"
 	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/collectors/process"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
@@ -54,7 +53,7 @@ type ProcessChatModel struct {
 	cancel context.CancelFunc
 }
 
-func NewProcessChatModel(command string, llm *googleai.GoogleAI) ProcessChatModel {
+func NewProcessChatModel(command string, llm *agents.GeminiClient) ProcessChatModel {
 	ctx, cancel := context.WithCancel(context.Background())
 	return ProcessChatModel{
 		command:  command,

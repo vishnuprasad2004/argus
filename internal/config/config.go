@@ -39,7 +39,7 @@ func Load() (*Config, error) {
 	viper.BindEnv("gemini_api_key", "GEMINI_API_KEY")
 
 	// defaults
-	viper.SetDefault("model", "gemini-1.5-flash")
+	viper.SetDefault("model", "gemini-2.5-flash")
 	viper.SetDefault("log_tail_lines", "200")
 
 	// create config dir + file if they don't exist

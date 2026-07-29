@@ -3,13 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/config"
 	"github.com/vishnuprasad2004/argus/internal/tui"
-	"github.com/tmc/langchaingo/llms/googleai"
-	"context"
 )
 
 var rootCmd = &cobra.Command{
@@ -37,11 +35,12 @@ Analyze Docker containers, running processes, and Kubernetes pods.`,
 		}
 
 		// init Gemini with config values
-		llm, err := googleai.New(
-			context.Background(),
-			googleai.WithAPIKey(cfg.GeminiAPIKey),
-			googleai.WithDefaultModel(cfg.Model),
-		)
+		// llm, err := googleai.New(
+		// 	context.Background(),
+		// 	googleai.WithAPIKey(cfg.GeminiAPIKey),
+		// 	googleai.WithDefaultModel(cfg.Model),
+		// )
+		llm, err := agents.CreateAgent(cfg)
 		if err != nil {
 			return fmt.Errorf("failed to init Gemini: %w", err)
 		}

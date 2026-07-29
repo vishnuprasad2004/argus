@@ -4,13 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/googleai"
 )
 
 type Orchestrator struct {
-	client     *googleai.GoogleAI
+	client     *GeminiClient
 	logAgent   *LogAnalysisAgent
 	rcaAgent   *RCAAgent
 	statsAgent *StatsAgent
@@ -18,16 +15,12 @@ type Orchestrator struct {
 	history    []ConversationTurn
 }
 
-type ConversationTurn struct {
-	Role    string // "user" or "assistant"
-	Content string
-}
 
-func NewOrchestrator(client *googleai.GoogleAI) *Orchestrator {
+func NewOrchestrator(client *GeminiClient) *Orchestrator {
 	return &Orchestrator{
 		client:     client,
-		logAgent:   &LogAnalysisAgent{AgentTool{client: client}},
-		rcaAgent:   &RCAAgent{client: client},
+		logAgent:   &LogAnalysisAgent{ client: client },
+		rcaAgent:   &RCAAgent{ client: client },
 		statsAgent: &StatsAgent{}, // no LLM needed
 		Events:     make(chan AgentEvent, 10),
 	}
@@ -56,7 +49,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, logs []LogEntry) (
 	}
 
 	// THE key prompt — orch is the agent, tools are just capabilities
-	systemPrompt := fmt.Sprintf(`
+	system_prompt := fmt.Sprintf(`
 You are Argus, an expert SRE AI assistant embedded in a terminal tool.
 You are having a conversation with a developer about their running service.
 
@@ -83,9 +76,10 @@ REASON: why you need it
 Otherwise just reply normally.
 `, historyStr.String(), logContext)
 
+	userMsg := fmt.Sprintf("%s\n\n%s", query, logContext)
+
 	// single LLM call — orch decides everything
-	response, err := llms.GenerateFromSinglePrompt(ctx, o.client,
-		systemPrompt+"\n\nuser: "+query)
+	response, err := o.client.Chat(ctx, system_prompt, o.history[:len(o.history)-1], userMsg)
 	if err != nil {
 		return "", fmt.Errorf("orchestrator: %w", err)
 	}
@@ -163,7 +157,7 @@ func (o *Orchestrator) handleToolCall(ctx context.Context, toolResponse, origina
 		Just answer naturally as if you already knew this.
 		`, historyStr, toolName, toolResult, originalQuery)
 
-	finalAnswer, err := llms.GenerateFromSinglePrompt(ctx, o.client, finalPrompt)
+	finalAnswer, err := o.client.Generate(ctx, finalPrompt)
 	if err != nil {
 		return "", err
 	}

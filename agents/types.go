@@ -3,8 +3,13 @@ package agents
 import (
 	"context"
 	"time"
-	"github.com/tmc/langchaingo/llms/googleai"
 )
+
+// ConversationTurn is defined here since orchestrator uses it
+type ConversationTurn struct {
+    Role    string // "user" or "assistant"
+    Content string
+}
 
 type LogEntry struct {
 	Timestamp time.Time
@@ -26,11 +31,11 @@ type AgentOutput struct {
 	TokensUsed int
 }
 
-type Agent interface {
-	Name() string
-	Description() string // orchestrator reads this to pick which agent to call
-	Run(ctx context.Context, input AgentInput) (AgentOutput, error)
-}
+// type Agent interface {
+// 	Name() string
+// 	Description() string // orchestrator reads this to pick which agent to call
+// 	Run(ctx context.Context, input AgentInput) (AgentOutput, error)
+// }
 
 type Tool interface {
 	Name() string
@@ -38,10 +43,10 @@ type Tool interface {
 	Call(ctx context.Context, input string) (string, error)
 }
 
-type AgentTool struct {
-  agent Agent
-	client *googleai.GoogleAI
-}
+// type AgentTool struct {
+//   agent Agent
+// 	client *googleai.GoogleAI
+// }
 
 type EventType string
 
@@ -64,13 +69,18 @@ type AgentEvent struct {
 // ⚙ Called: rca_agent  
 // ✓ Root cause identified
 
-
-func (t AgentTool) Name() string        { return t.agent.Name() }
-func (t AgentTool) Description() string { return t.agent.Description() }
-func (t AgentTool) Call(ctx context.Context, input string) (string, error) {
-	out, err := t.agent.Run(ctx, AgentInput{Query: input})
-	if err != nil {
-			return "", err
-	}
-	return out.Result, nil
+type Agent interface {
+    Name()        string
+    Description() string
+    Run(ctx context.Context, input AgentInput) (AgentOutput, error)
 }
+
+// func (t AgentTool) Name() string        { return t.agent.Name() }
+// func (t AgentTool) Description() string { return t.agent.Description() }
+// func (t AgentTool) Call(ctx context.Context, input string) (string, error) {
+// 	out, err := t.agent.Run(ctx, AgentInput{Query: input})
+// 	if err != nil {
+// 			return "", err
+// 	}
+// 	return out.Result, nil
+// }
