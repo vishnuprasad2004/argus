@@ -81,7 +81,7 @@ When I made the same tool in Java or Python, it lacked being a lightweight tool,
 | Language | Go 1.22+ | Single binary, low RAM, CNCF-native |
 | TUI framework | Bubble Tea + Lipgloss | Same as k9s, lazygit — Elm-arch, clean |
 | CLI framework | Cobra + Viper | Same as kubectl, Helm — industry standard |
-| AI | LangChainGo + Gemini API | Free tier, fast, good reasoning |
+| AI | Google Gen AI Go SDK + Gemini API | Free tier, fast, good reasoning |
 | LLM model | gemini-1.5-flash | Fast responses, free tier, good for log analysis |
 | Markdown | Glamour | Same library used by GitHub's Glow CLI |
 | Docker | docker/docker SDK | Official Go client |
