@@ -1,17 +1,17 @@
 package components
 
 import (
-    "fmt"
+	"fmt"
 
-    "github.com/charmbracelet/bubbles/viewport"
-    tea "github.com/charmbracelet/bubbletea"
-    "github.com/vishnuprasad2004/argus/agents"
-    "github.com/vishnuprasad2004/argus/internal/tui/styles"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/vishnuprasad2004/argus/internal/tui/styles"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 type LogViewer struct {
     viewport viewport.Model  // bubbles viewport = scrollable panel
-    logs     []agents.LogEntry
+    logs     []types.LogEntry
     ready    bool            // false until we know terminal size
 }
 
@@ -25,7 +25,7 @@ func NewLogViewer(width, height int) LogViewer {
 }
 
 // AppendLog adds a new log entry and scrolls to bottom
-func (l *LogViewer) AppendLog(entry agents.LogEntry) {
+func (l *LogViewer) AppendLog(entry types.LogEntry) {
     l.logs = append(l.logs, entry)
     l.viewport.SetContent(l.renderLogs())
     l.viewport.GotoBottom() // auto scroll — like tail -f behaviour
@@ -74,6 +74,6 @@ func (l *LogViewer) Resize(width, height int) {
 }
 
 // Logs returns current log snapshot — for passing to orchestrator
-func (l *LogViewer) Logs() []agents.LogEntry {
+func (l *LogViewer) Logs() []types.LogEntry {
     return l.logs
 }

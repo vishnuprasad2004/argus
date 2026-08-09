@@ -1,15 +1,15 @@
 package file
 
 import (
-    "bufio"
-    "encoding/json"
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
-    "time"
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
-    "github.com/vishnuprasad2004/argus/agents"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 type FileCollector struct {
@@ -57,7 +57,7 @@ func (f *FileCollector) Path() string { return f.path }
 
 
 
-func (f *FileCollector) FetchLogs(opts FetchOptions) ([]agents.LogEntry, error) {
+func (f *FileCollector) FetchLogs(opts FetchOptions) ([]types.LogEntry, error) {
     file, err := os.Open(f.path)
     if err != nil {
         return nil, fmt.Errorf("cannot open file: %w", err)
@@ -104,8 +104,8 @@ func (f *FileCollector) FetchLogs(opts FetchOptions) ([]agents.LogEntry, error) 
 
 // parsePlainLines handles .log and .txt files
 // tries common log formats, falls back to raw line
-func parsePlainLines(lines []string, source string) ([]agents.LogEntry, error) {
-    var entries []agents.LogEntry
+func parsePlainLines(lines []string, source string) ([]types.LogEntry, error) {
+    var entries []types.LogEntry
 
     for _, line := range lines {
         if strings.TrimSpace(line) == "" {
@@ -116,8 +116,8 @@ func parsePlainLines(lines []string, source string) ([]agents.LogEntry, error) {
     return entries, nil
 }
 
-func parsePlainLine(raw, source string) agents.LogEntry {
-    entry := agents.LogEntry{
+func parsePlainLine(raw, source string) types.LogEntry {
+    entry := types.LogEntry{
         Source:    source,
         Timestamp: time.Now(),
         Level:     "INFO",
@@ -183,92 +183,32 @@ func parsePlainLine(raw, source string) agents.LogEntry {
     return entry
 }
 
-
-
-
-// parseJSONLines handles newline-delimited JSON (one object per line)
-// common format for structured logging (Winston, Pino, Zap, Logrus JSON mode)
-func parseJSONLines(lines []string, source string) ([]agents.LogEntry, error) {
-    var entries []agents.LogEntry
-
+// parseJSONLines parses each line as JSON into LogEntry. If a line cannot be
+// unmarshalled into the LogEntry shape, it will be stored as Message.
+func parseJSONLines(lines []string, source string) ([]types.LogEntry, error) {
+    var entries []types.LogEntry
     for _, line := range lines {
         if strings.TrimSpace(line) == "" {
             continue
         }
-
-        var raw map[string]any
-        if err := json.Unmarshal([]byte(line), &raw); err != nil {
-            // not valid JSON — parse as plain text
-            entries = append(entries, parsePlainLine(line, source))
-            continue
-        }
-
-        entry := agents.LogEntry{
-            Source:    source,
-            Timestamp: time.Now(),
-            Level:     "INFO",
-            Metadata:  map[string]string{"type": "json"},
-        }
-
-        // ── extract message — try common field names ──────────────────
-        // different loggers use different field names
-        for _, key := range []string{"message", "msg", "text", "body", "log"} {
-            if v, ok := raw[key].(string); ok {
-                entry.Message = v
-                break
+        var e types.LogEntry
+        if err := json.Unmarshal([]byte(line), &e); err != nil {
+            // fallback: keep raw line as message
+            e = types.LogEntry{
+                Source:    source,
+                Timestamp: time.Now(),
+                Level:     "INFO",
+                Message:   line,
+                Metadata:  map[string]string{"type": "file"},
             }
         }
-        if entry.Message == "" {
-            entry.Message = line // fallback to raw
+        if e.Source == "" {
+            e.Source = source
         }
-
-        // ── extract level ─────────────────────────────────────────────
-        for _, key := range []string{"level", "severity", "lvl", "log_level"} {
-            if v, ok := raw[key].(string); ok {
-                entry.Level = normalizeLevel(v)
-                break
-            }
+        if e.Metadata == nil {
+            e.Metadata = map[string]string{"type": "file"}
         }
-
-        // ── extract timestamp ─────────────────────────────────────────
-        for _, key := range []string{"time", "timestamp", "ts", "@timestamp", "datetime"} {
-            if v, ok := raw[key].(string); ok {
-                formats := []string{
-                    time.RFC3339Nano,
-                    time.RFC3339,
-                    "2006-01-02 15:04:05",
-                }
-                for _, f := range formats {
-                    if t, err := time.Parse(f, v); err == nil {
-                        entry.Timestamp = t
-                        break
-                    }
-                }
-                break
-            }
-            // unix timestamp as float
-            if v, ok := raw[key].(float64); ok {
-                entry.Timestamp = time.Unix(int64(v), 0)
-                break
-            }
-        }
-
-        entries = append(entries, entry)
+        entries = append(entries, e)
     }
-
     return entries, nil
-}
-
-// normalizeLevel maps various level strings to ERROR/WARN/INFO/DEBUG
-func normalizeLevel(raw string) string {
-    switch strings.ToUpper(strings.TrimSpace(raw)) {
-    case "ERROR", "ERR", "FATAL", "CRITICAL", "PANIC", "EMERG", "ALERT":
-        return "ERROR"
-    case "WARN", "WARNING":
-        return "WARN"
-    case "DEBUG", "TRACE", "VERBOSE":
-        return "DEBUG"
-    default:
-        return "INFO"
-    }
 }

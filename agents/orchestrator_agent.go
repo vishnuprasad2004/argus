@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"github.com/vishnuprasad2004/argus/internal/types"
+	"github.com/vishnuprasad2004/argus/pipeline"
 )
 
 type Orchestrator struct {
@@ -26,7 +28,7 @@ func NewOrchestrator(client *GeminiClient) *Orchestrator {
 	}
 }
 
-func (o *Orchestrator) Run(ctx context.Context, query string, logs []LogEntry) (string, error) {
+func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEntry) (string, error) {
 
 	// add user message to history
 	o.history = append(o.history, ConversationTurn{
@@ -39,6 +41,8 @@ func (o *Orchestrator) Run(ctx context.Context, query string, logs []LogEntry) (
 	for _, turn := range o.history {
 		fmt.Fprintf(&historyStr, "%s: %s\n", turn.Role, turn.Content)
 	}
+
+	logs = pipeline.Scrub(logs)
 
 	// build log summary — only send if logs exist
 	// don't resend full logs every turn, too many tokens
@@ -98,7 +102,8 @@ Otherwise just reply normally.
 
 
 
-func (o *Orchestrator) handleToolCall(ctx context.Context, toolResponse, originalQuery string, logs []LogEntry, historyStr string) (string, error) {
+
+func (o *Orchestrator) handleToolCall(ctx context.Context, toolResponse, originalQuery string, logs []types.LogEntry, historyStr string) (string, error) {
 
 	// parse which tool orch asked for
 	// response looks like: "TOOL: log_analysis\nREASON: user asking about errors"
@@ -169,6 +174,6 @@ func (o *Orchestrator) handleToolCall(ctx context.Context, toolResponse, origina
 
 // RunStats runs just the stats agent — no LLM, instant response
 // exported so main.go and TUI can call it directly for /stats preset
-func (o *Orchestrator) RunStats(ctx context.Context, logs []LogEntry) (AgentOutput, error) {
+func (o *Orchestrator) RunStats(ctx context.Context, logs []types.LogEntry) (AgentOutput, error) {
 	return o.statsAgent.Run(ctx, AgentInput{Logs: logs})
 }

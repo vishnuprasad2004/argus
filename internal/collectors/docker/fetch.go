@@ -1,18 +1,19 @@
 package docker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
-	"bufio"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/vishnuprasad2004/argus/agents"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // FetchLogs pulls the last N lines from a container — works even if stopped
 // This is the "what happened?" mode
-func (d *DockerCollector) FetchLogs(ctx context.Context, target ContainerTarget, opts FetchOptions) ([]agents.LogEntry, error) {
+func (d *DockerCollector) FetchLogs(ctx context.Context, target ContainerTarget, opts FetchOptions) ([]types.LogEntry, error) {
     reader, err := d.client.ContainerLogs(ctx, target.ID, container.LogsOptions{
         ShowStdout: true,
         ShowStderr: true,
@@ -32,7 +33,7 @@ func (d *DockerCollector) FetchLogs(ctx context.Context, target ContainerTarget,
         pw.Close()
     }()
 
-    var logs []agents.LogEntry
+    var logs []types.LogEntry
     scanner := bufio.NewScanner(pr)
     for scanner.Scan() {
         logs = append(logs, parseDockerLine(scanner.Text(), target))

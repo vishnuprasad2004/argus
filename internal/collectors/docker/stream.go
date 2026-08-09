@@ -1,14 +1,15 @@
 package docker
 
 import (
-"context"
+	"context"
 	"fmt"
 	"io"
 
 	"bufio"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/vishnuprasad2004/argus/agents"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // Stream tails logs from one container and sends them as LogEntry
@@ -18,10 +19,10 @@ import (
 //	errCh — any error including "container stopped"
 //
 // caller does: logCh, errCh := collector.Stream(ctx, target)
-func (d *DockerCollector) Stream(ctx context.Context, target ContainerTarget) (<-chan agents.LogEntry, <-chan error) {
+func (d *DockerCollector) Stream(ctx context.Context, target ContainerTarget) (<-chan types.LogEntry, <-chan error) {
 	// buffered channels — like BlockingQueue(100) in Java
 	// buffered means sender won't block if receiver is slightly slow
-	logCh := make(chan agents.LogEntry, 100)
+	logCh := make(chan types.LogEntry, 100)
 	errCh := make(chan error, 1)
 
 	// run in background goroutine — like new Thread().start() in Java

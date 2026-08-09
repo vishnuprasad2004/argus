@@ -2,7 +2,7 @@ package agents
 
 import (
 	"context"
-	"time"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // ConversationTurn is defined here since orchestrator uses it
@@ -11,17 +11,10 @@ type ConversationTurn struct {
     Content string
 }
 
-type LogEntry struct {
-	Timestamp time.Time
-	Level     string // ERROR, WARN, INFO, DEBUG
-	Source    string // pod name / container id / process name
-	Message   string
-	Metadata  map[string]string // namespace, image, pid etc
-}
 
 type AgentInput struct {
 	Query   string
-	Logs    []LogEntry
+	Logs    []types.LogEntry
 	Context string // rolling summary from previous window
 }
 

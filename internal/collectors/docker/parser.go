@@ -1,15 +1,15 @@
 package docker
 
 import (
-	"github.com/vishnuprasad2004/argus/agents"
 	"strings"
 	"time"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // parseDockerLine turns one raw docker log line into a clean LogEntry
 // raw format from docker: "2024-01-15T10:23:45.123456789Z some message here"
-func parseDockerLine(raw string, target ContainerTarget) agents.LogEntry {
-	entry := agents.LogEntry{
+func parseDockerLine(raw string, target ContainerTarget) types.LogEntry {
+	entry := types.LogEntry{
 		Source:    target.Name,
 		Timestamp: time.Now(),
 		Level:     "INFO",

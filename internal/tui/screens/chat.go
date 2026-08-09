@@ -11,19 +11,20 @@ import (
 	"github.com/vishnuprasad2004/argus/internal/collectors/docker"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // ── message types ─────────────────────────────────────────────────────────
 
-type newLogEntryMsg  agents.LogEntry
+type newLogEntryMsg  types.LogEntry
 type streamEndedMsg  struct{ err error }
 type queryResultMsg  struct{ result string; err error }
 type streamStartedMsg struct {
-	logCh <-chan agents.LogEntry
+	logCh <-chan types.LogEntry
 	errCh <-chan error
 }
 type logsLoadedMsg struct {
-	logs      []agents.LogEntry
+	logs      []types.LogEntry
 	collector *docker.DockerCollector
 }
 
@@ -52,7 +53,7 @@ type ChatModel struct {
 	focusedPanel int // 0 = logs, 1 = answers
 
 	// live stream channels — set when streamStartedMsg arrives
-	liveCh    <-chan agents.LogEntry
+	liveCh    <-chan types.LogEntry
 	liveErrCh <-chan error
 
 	ctx    context.Context
@@ -122,12 +123,12 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// one live log line arrived — append and schedule next read
 	case newLogEntryMsg:
-		m.logViewer.AppendLog(agents.LogEntry(msg))
+		m.logViewer.AppendLog(types.LogEntry(msg))
 		return m, m.waitForNextLog()
 
 	// stream ended — container stopped or error
 	case streamEndedMsg:
-		warning := agents.LogEntry{
+		warning := types.LogEntry{
 			Level:   "WARN",
 			Source:  "argus",
 			Message: func() string {
@@ -300,7 +301,7 @@ func (m ChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 	)
 }
 
-func (m ChatModel) runOrchestrator(query string, logs []agents.LogEntry) tea.Cmd {
+func (m ChatModel) runOrchestrator(query string, logs []types.LogEntry) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.orch.Run(m.ctx, query, logs)
 		return queryResultMsg{result: result, err: err}

@@ -11,14 +11,15 @@ import (
 	"github.com/vishnuprasad2004/argus/internal/collectors/process"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // ── message types ─────────────────────────────────────────────────────────
 
-type procLogMsg agents.LogEntry
+type procLogMsg types.LogEntry
 type procExitedMsg process.ProcessResult
 type procStartedMsg struct {
-	logCh    <-chan agents.LogEntry
+	logCh    <-chan types.LogEntry
 	resultCh <-chan process.ProcessResult
 	proc     *process.ProcessCollector
 }
@@ -45,7 +46,7 @@ type ProcessChatModel struct {
 	focusedPanel int // 0 = logs, 1 = answers
 
 	proc     *process.ProcessCollector
-	logCh    <-chan agents.LogEntry
+	logCh    <-chan types.LogEntry
 	resultCh <-chan process.ProcessResult
 	exited   bool // true once process has stopped
 
@@ -102,7 +103,7 @@ func (m ProcessChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// one log line from the running process
 	case procLogMsg:
-		m.logViewer.AppendLog(agents.LogEntry(msg))
+		m.logViewer.AppendLog(types.LogEntry(msg))
 		if !m.exited {
 			return m, m.waitForNextProcLog()
 		}
@@ -119,7 +120,7 @@ func (m ProcessChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			statusLine = styles.LogWarn.Render(fmt.Sprintf("⚠ %s", result.Message))
 		}
-		warning := agents.LogEntry{Level: "WARN", Source: "argus", Message: result.Message}
+		warning := types.LogEntry{Level: "WARN", Source: "argus", Message: result.Message}
 		m.logViewer.AppendLog(warning)
 		m.answerContent = append(m.answerContent, statusLine)
 		m.refreshAnswerVP()
@@ -264,7 +265,7 @@ func (m ProcessChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 	)
 }
 
-func (m ProcessChatModel) runOrchestrator(query string, logs []agents.LogEntry) tea.Cmd {
+func (m ProcessChatModel) runOrchestrator(query string, logs []types.LogEntry) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.orch.Run(m.ctx, query, logs)
 		return queryResultMsg{result: result, err: err}

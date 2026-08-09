@@ -1,16 +1,16 @@
 package process
 
 import (
-	"io"
-	"os"
-	"fmt"
-	"time"
 	"bufio"
 	"context"
-	"strings"
+	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
-	"github.com/vishnuprasad2004/argus/agents"
+	"strings"
+	"time"
+	"github.com/vishnuprasad2004/argus/internal/types"
 )
 
 // NewProcessCollector sets up the collector in the user's current directory
@@ -45,7 +45,7 @@ func NewProcessCollector() (*ProcessCollector, error) {
 func (p *ProcessCollector) Start(
 	ctx context.Context,
 	command string, // raw command string from user
-) (<-chan agents.LogEntry, <-chan ProcessResult, error) {
+) (<-chan types.LogEntry, <-chan ProcessResult, error) {
 
 	// split "npm run dev" into ["npm", "run", "dev"]
 	// strings.Fields splits on any whitespace, like split(/\s+/) in JS
@@ -78,7 +78,7 @@ func (p *ProcessCollector) Start(
 
 	fmt.Printf("✓ Process started (PID %d): %s\n", p.cmd.Process.Pid, command)
 
-	logCh := make(chan agents.LogEntry, 100)
+	logCh := make(chan types.LogEntry, 100)
 	resultCh := make(chan ProcessResult, 1) // capacity 1 — only one exit event
 
 	// pipe stdout and stderr into logCh concurrently
@@ -98,13 +98,13 @@ func (p *ProcessCollector) Start(
 func (p *ProcessCollector) pipeStream(
 	pipe io.ReadCloser,
 	defaultLevel string,
-	logCh chan<- agents.LogEntry, // chan<- means write-only from this function
+	logCh chan<- types.LogEntry, // chan<- means write-only from this function
 ) {
 	scanner := bufio.NewScanner(pipe)
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		entry := agents.LogEntry{
+		entry := types.LogEntry{
 			Timestamp: time.Now(),
 			Level:     defaultLevel, // stderr always ERROR, stdout checked below
 			Source:    "process",
@@ -147,7 +147,7 @@ func (p *ProcessCollector) pipeStream(
 // this is what triggers "show stats + open query bar" in TUI
 func (p *ProcessCollector) waitForExit(
 	resultCh chan<- ProcessResult,
-	logCh chan agents.LogEntry,
+	logCh chan types.LogEntry,
 ) {
 	// cmd.Wait() blocks until process exits — like process.waitFor() in Java
 	err := p.cmd.Wait()
