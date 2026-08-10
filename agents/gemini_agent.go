@@ -3,8 +3,10 @@ package agents
 import (
 	"context"
 	"fmt"
+	"strings"
+
+	"github.com/vishnuprasad2004/argus/internal/config"
 	"google.golang.org/genai"
-	"github.com/vishnuprasad2004/argus/internal/config"	
 )
 
 // Client wraps the official Google Gemini SDK
@@ -96,4 +98,76 @@ func (g *GeminiClient) Chat(ctx context.Context, system string, history []Conver
 		return "", fmt.Errorf("chat: %w", err)
 	}
 	return result.Text(), nil
+}
+
+
+// ChatStream — streaming version, used for the FINAL answer shown to user
+// onChunk is called for each token chunk as it arrives
+// returns the full assembled response when done
+func (g *GeminiClient) ChatStream(
+    ctx context.Context,
+    system string,
+    history []ConversationTurn,
+    userMsg string,
+    onChunk func(string), // called per chunk — TUI uses this to render tokens
+) (string, error) {
+    contents, cfg := g.buildContents(system, history, userMsg)
+
+    iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, cfg)
+
+    var full strings.Builder
+
+    for result, err := range iter {
+        if err != nil {
+            // partial response is still useful — return what we got
+            if full.Len() > 0 {
+                return full.String(), nil
+            }
+            return "", fmt.Errorf("stream: %w", err)
+        }
+
+        chunk := result.Text()
+        if chunk == "" {
+            continue
+        }
+
+        full.WriteString(chunk)
+        onChunk(chunk) // fire each chunk to caller immediately
+    }
+
+    return full.String(), nil
+}
+
+
+// buildContents shared between Chat and ChatStream
+func (g *GeminiClient) buildContents(
+    system string,
+    history []ConversationTurn,
+    userMsg string,
+) ([]*genai.Content, *genai.GenerateContentConfig) {
+    var contents []*genai.Content
+
+    for _, turn := range history {
+        role := genai.RoleUser
+        if turn.Role == "assistant" {
+            role = genai.RoleModel
+        }
+        contents = append(contents, &genai.Content{
+            Role:  role,
+            Parts: []*genai.Part{genai.NewPartFromText(turn.Content)},
+        })
+    }
+
+    contents = append(contents, &genai.Content{
+        Role:  genai.RoleUser,
+        Parts: []*genai.Part{genai.NewPartFromText(userMsg)},
+    })
+
+    cfg := &genai.GenerateContentConfig{
+        SystemInstruction: &genai.Content{
+            Parts: []*genai.Part{genai.NewPartFromText(system)},
+        },
+    }
+
+    return contents, cfg
 }

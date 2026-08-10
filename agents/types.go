@@ -48,6 +48,7 @@ const (
     EventAnswer   EventType = "answer"
     EventWarning  EventType = "warning"
     EventError    EventType = "error"
+		EventChunk     EventType = "chunk"
 )
 
 type AgentEvent struct {

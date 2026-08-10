@@ -28,6 +28,10 @@ type logsLoadedMsg struct {
 	collector *docker.DockerCollector
 }
 
+type streamChunkMsg struct {
+    chunk string
+}
+
 // ── model ─────────────────────────────────────────────────────────────────
 
 type ChatModel struct {
@@ -58,6 +62,8 @@ type ChatModel struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	streamingAnswer string
 }
 
 func NewChatModel(target docker.ContainerTarget, llm *agents.GeminiClient) ChatModel {
@@ -162,10 +168,20 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// agent event — forward to thinking indicator
 	case components.AgentEventMsg:
-		cmd := m.thinking.Update(msg)
-		cmds = append(cmds, cmd)
-		return m, tea.Batch(cmd, m.watchOrchestratorEvents())
-
+    switch agents.EventType(msg.Type) {
+    case agents.EventChunk:
+      m.appendChunk(msg.Message)
+      cmd := m.thinking.Update(msg)
+      return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+    case agents.EventAnswer:
+      m.finalizeStreamingAnswer()
+      m.queryBar.Enable()
+      m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+      return m, nil
+    default:
+      cmd := m.thinking.Update(msg)
+      return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+  }
 	// user submitted query or preset command
 	case components.QuerySubmitMsg:
 		return m, m.handleQuery(msg)
@@ -413,4 +429,34 @@ func (m ChatModel) View() string {
 	b.WriteString(styles.Muted.Render("  ↑↓ scroll  focused: "+focused) + "\n")
 
 	return b.String()
+}
+
+
+// appendChunk adds a token to the currently-streaming answer
+func (m *ChatModel) appendChunk(chunk string) {
+    if m.streamingAnswer == "" {
+        // first chunk — add the "◆ Argus" header
+        m.answerContent = append(m.answerContent,
+            styles.AgentAnswer.Render("◆ Argus")+"\n")
+    }
+    m.streamingAnswer += chunk
+
+    // update the last answer entry with accumulated chunks
+    last := len(m.answerContent) - 1
+    m.answerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" +
+        m.streamingAnswer // raw for now, render markdown on finalize
+
+    m.refreshAnswerVP()
+}
+
+// finalizeStreamingAnswer renders markdown on the completed response
+func (m *ChatModel) finalizeStreamingAnswer() {
+    if m.streamingAnswer == "" {
+        return
+    }
+    last := len(m.answerContent) - 1
+    rendered := styles.RenderMarkdown(m.streamingAnswer, m.width-4)
+    m.answerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
+    m.streamingAnswer = "" // reset for next answer
+    m.refreshAnswerVP()
 }

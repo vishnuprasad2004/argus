@@ -52,6 +52,7 @@ type ProcessChatModel struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+	streamingAnswer string
 }
 
 func NewProcessChatModel(command string, llm *agents.GeminiClient) ProcessChatModel {
@@ -141,9 +142,25 @@ func (m ProcessChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case components.AgentEventMsg:
-		cmd := m.thinking.Update(msg)
-		cmds = append(cmds, cmd)
-		return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+    switch agents.EventType(msg.Type) {
+			case agents.EventChunk:
+				// append chunk to current streaming answer
+				// if no streaming answer in progress, start one
+				m.appendChunk(msg.Message)
+				cmd := m.thinking.Update(msg)
+				return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+
+			case agents.EventAnswer:
+				// streaming done — finalize and re-enable input
+				m.finalizeStreamingAnswer()
+				m.queryBar.Enable()
+				m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+				return m, nil
+
+			default:
+				cmd := m.thinking.Update(msg)
+				return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+  	}
 
 	case components.QuerySubmitMsg:
 		return m, m.handleQuery(msg)
@@ -378,4 +395,34 @@ func (m ProcessChatModel) View() string {
 	b.WriteString(styles.Muted.Render("  ↑↓ scroll  focused: "+focused) + "\n")
 
 	return b.String()
+}
+
+
+// appendChunk adds a token to the currently-streaming answer
+func (m *ProcessChatModel) appendChunk(chunk string) {
+    if m.streamingAnswer == "" {
+        // first chunk — add the "◆ Argus" header
+        m.answerContent = append(m.answerContent,
+            styles.AgentAnswer.Render("◆ Argus")+"\n")
+    }
+    m.streamingAnswer += chunk
+
+    // update the last answer entry with accumulated chunks
+    last := len(m.answerContent) - 1
+    m.answerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" +
+        m.streamingAnswer // raw for now, render markdown on finalize
+
+    m.refreshAnswerVP()
+}
+
+// finalizeStreamingAnswer renders markdown on the completed response
+func (m *ProcessChatModel) finalizeStreamingAnswer() {
+    if m.streamingAnswer == "" {
+        return
+    }
+    last := len(m.answerContent) - 1
+    rendered := styles.RenderMarkdown(m.streamingAnswer, m.width-4)
+    m.answerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
+    m.streamingAnswer = "" // reset for next answer
+    m.refreshAnswerVP()
 }
