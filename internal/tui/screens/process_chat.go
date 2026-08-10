@@ -392,7 +392,30 @@ func (m ProcessChatModel) View() string {
 
 	// ── scroll hint ───────────────────────────────────────────────────
 	focused := map[int]string{0: "logs", 1: "answers"}[m.focusedPanel]
-	b.WriteString(styles.Muted.Render("  ↑↓ scroll  focused: "+focused) + "\n")
+	shortcuts := []struct{ key, desc string }{
+			{"↑↓",     "scroll"},
+			{"tab",    "switch panel"},
+			{"esc",    "back"},
+			{"/stats", "error counts"},
+			{"/clear", "clear chat"},
+			{"/quit",  "quit"},
+	}
+
+	var keys, descs strings.Builder
+	for i, s := range shortcuts {
+			keys.WriteString(styles.Brand.Render(s.key))
+			descs.WriteString(styles.Muted.Render(s.desc))
+			if i < len(shortcuts)-1 {
+					keys.WriteString(styles.Muted.Render("  ·  "))
+					descs.WriteString(styles.Muted.Render("  ·  "))
+			}
+	}
+
+	b.WriteString(styles.HRuleStr(m.width) + "\n")
+	b.WriteString("  " + keys.String() + "\n")
+	b.WriteString("  " + descs.String() + "\n")
+	b.WriteString("  " + styles.Muted.Render("panel: "+focused) + "\n")
+
 
 	return b.String()
 }
