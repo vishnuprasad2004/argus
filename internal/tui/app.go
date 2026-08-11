@@ -12,8 +12,10 @@ const (
 	ScreenWelcome Screen = iota
 	ScreenSourceSelect
 	ScreenContainerSelect
-	ScreenProcessSetup   // ← was missing
+	ScreenProcessSetup
 	ScreenProcessChat
+	ScreenFileSetup 
+  ScreenFileChat
 	ScreenChat
 )
 
@@ -27,6 +29,10 @@ type RootModel struct {
 	containerSelect screens.ContainerSelectModel
 	processSetup    screens.ProcessSetupModel  // ← was missing
 	processChat     screens.ProcessChatModel
+
+	fileSetup screens.FileSetupModel
+	fileChat  screens.FileChatModel
+
 	chat            screens.ChatModel
 	llm             *agents.GeminiClient
 }
@@ -62,6 +68,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newModel, cmd := m.processChat.Update(msg)
 			m.processChat = newModel.(screens.ProcessChatModel)
 			return m, cmd
+		case ScreenFileChat:                         
+      newModel, cmd := m.fileChat.Update(msg)
+      m.fileChat = newModel.(screens.FileChatModel)
+      return m, cmd
 		}
 		return m, nil
 
@@ -78,15 +88,27 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.sourceSelect.Init()
 
 	case screens.SwitchToContainerSelect:
-		// ← THE KEY FIX — route process separately
-		if msg.Source == "process" {
-			m.screen = int(ScreenProcessSetup)
-			m.processSetup = screens.NewProcessSetupModel()
-			return m, m.processSetup.Init()
-		}
-		m.screen = int(ScreenContainerSelect)
-		m.containerSelect = screens.NewContainerSelectModel(msg.Source)
-		return m, m.containerSelect.Init()
+    switch msg.Source {
+    case "process":
+        m.screen = int(ScreenProcessSetup)
+        m.processSetup = screens.NewProcessSetupModel()
+        return m, m.processSetup.Init()
+    case "file":           // ← new
+        m.screen = int(ScreenFileSetup)
+        m.fileSetup = screens.NewFileSetupModel()
+        return m, m.fileSetup.Init()
+    default:
+        m.screen = int(ScreenContainerSelect)
+        m.containerSelect = screens.NewContainerSelectModel(msg.Source)
+        return m, m.containerSelect.Init()
+    }
+
+	case screens.SwitchToFileChat:
+    m.screen = int(ScreenFileChat)
+    m.fileChat = screens.NewFileChatModel(
+        msg.Collector, msg.FullFile, msg.TailLines, m.llm)
+    return m, m.fileChat.Init()
+
 
 	case screens.SwitchToProcessChat:
 		m.screen = int(ScreenProcessChat)
@@ -131,6 +153,16 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newModel, cmd := m.chat.Update(msg)
 		m.chat = newModel.(screens.ChatModel)
 		return m, cmd
+	
+	case ScreenFileSetup:
+    newModel, cmd := m.fileSetup.Update(msg)
+    m.fileSetup = newModel.(screens.FileSetupModel)
+    return m, cmd
+
+	case ScreenFileChat:
+		newModel, cmd := m.fileChat.Update(msg)
+		m.fileChat = newModel.(screens.FileChatModel)
+		return m, cmd
 	}
 
 	return m, nil
@@ -150,6 +182,10 @@ func (m RootModel) View() string {
 		return m.processChat.View()
 	case ScreenChat:
 		return m.chat.View()
+	case ScreenFileSetup:
+    return m.fileSetup.View()
+	case ScreenFileChat:
+    return m.fileChat.View()
 	}
 	return ""
 }
