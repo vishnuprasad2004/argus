@@ -3,13 +3,15 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vishnuprasad2004/argus/agents"
+	"github.com/vishnuprasad2004/argus/internal/config"
 	"github.com/vishnuprasad2004/argus/internal/tui/screens"
 )
 
 type Screen int
 
 const (
-	ScreenWelcome Screen = iota
+	ScreenWizard	Screen = iota
+	ScreenWelcome
 	ScreenSourceSelect
 	ScreenContainerSelect
 	ScreenProcessSetup
@@ -29,6 +31,7 @@ type RootModel struct {
 	containerSelect screens.ContainerSelectModel
 	processSetup    screens.ProcessSetupModel  // ← was missing
 	processChat     screens.ProcessChatModel
+	wizard screens.SetupWizardModel
 
 	fileSetup screens.FileSetupModel
 	fileChat  screens.FileChatModel
@@ -38,6 +41,15 @@ type RootModel struct {
 }
 
 func NewRootModel(llm *agents.GeminiClient) RootModel {
+	// show wizard on first run, welcome screen otherwise
+	if config.IsFirstRun() {
+		return RootModel{
+			screen: int(ScreenWizard),
+			wizard: screens.NewSetupWizardModel(),
+			llm:    llm,
+		}
+	}
+
 	return RootModel{
 		screen:  int(ScreenWelcome),
 		welcome: screens.NewWelcomeModel(),
@@ -82,6 +94,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── screen transitions ────────────────────────────────────────────
 
+	case screens.WizardDoneMsg:
+		m.screen  = int(ScreenWelcome)
+		m.welcome = screens.NewWelcomeModel()
+		return m, m.welcome.Init()
+
 	case screens.SwitchToSourceSelect:
 		m.screen = int(ScreenSourceSelect)
 		m.sourceSelect = screens.NewSourceSelectModel()
@@ -124,6 +141,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── delegate to active screen ─────────────────────────────────────
 
 	switch Screen(m.screen) {
+	case ScreenWizard:
+		newModel, cmd := m.wizard.Update(msg)
+		m.wizard = newModel.(screens.SetupWizardModel)
+		return m, cmd
 	case ScreenWelcome:
 		newModel, cmd := m.welcome.Update(msg)
 		m.welcome = newModel.(screens.WelcomeModel)
@@ -170,6 +191,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m RootModel) View() string {
 	switch Screen(m.screen) {
+	case ScreenWizard:
+		return m.wizard.View()
 	case ScreenWelcome:
 		return m.welcome.View()
 	case ScreenSourceSelect:

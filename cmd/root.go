@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/config"
 	"github.com/vishnuprasad2004/argus/internal/tui"
+	"os"
 )
 
 var rootCmd = &cobra.Command{
@@ -28,24 +28,22 @@ Analyze Docker containers, running processes, and Kubernetes pods.`,
 	SilenceUsage: true,
 
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// load config — fails fast with helpful message if key missing
+		// try to load config — if missing key, wizard handles it
 		cfg, err := config.Load()
+
+		var llm *agents.GeminiClient
+
 		if err != nil {
-			return err // cobra prints this cleanly
+			// config missing or no key — launch with nil LLM
+			// wizard will collect the key and restart
+			llm = nil
+		} else {
+			llm, err = agents.CreateAgentWithConfig(cfg)
+			if err != nil {
+				return fmt.Errorf("failed to init Gemini: %w", err)
+			}
 		}
 
-		// init Gemini with config values
-		// llm, err := googleai.New(
-		// 	context.Background(),
-		// 	googleai.WithAPIKey(cfg.GeminiAPIKey),
-		// 	googleai.WithDefaultModel(cfg.Model),
-		// )
-		llm, err := agents.CreateAgent(cfg)
-		if err != nil {
-			return fmt.Errorf("failed to init Gemini: %w", err)
-		}
-
-		// start TUI
 		p := tea.NewProgram(
 			tui.NewRootModel(llm),
 			tea.WithAltScreen(),

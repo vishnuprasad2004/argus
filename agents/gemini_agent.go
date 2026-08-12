@@ -171,3 +171,18 @@ func (g *GeminiClient) buildContents(
 
     return contents, cfg
 }
+
+func CreateAgentWithConfig(cfg *config.Config) (*GeminiClient, error) {
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  cfg.GeminiAPIKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &GeminiClient{
+		client: client,
+		model:  cfg.Model,
+	}, nil
+}
