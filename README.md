@@ -84,7 +84,7 @@ Argus solves this.
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.22+ (not required for binary installation)
 - Docker Desktop (for container log analysis)
 - A Gemini API key — free at [aistudio.google.com](https://aistudio.google.com)
 
@@ -97,7 +97,7 @@ go build -o bin/argus ./cmd/
 ./bin/argus
 ```
 
-### Install binary (recommended)
+### Binary Installation (recommended)
 
 Download the binary for your platform from [Releases](https://github.com/vishnuprasad2004/argus/releases):
 
@@ -106,14 +106,23 @@ chmod +x argus-darwin-arm64 && ./argus-darwin-arm64
 
 # macOS (Intel)
 chmod +x argus-darwin-amd64 && ./argus-darwin-amd64
-
-# Linux
-chmod +x argus-linux-amd64 && ./argus-linux-amd64 -->
+ -->
 ```bash
-
+# Linux
+chmod +x argus-linux-amd64 && ./argus-linux-amd64
 # Windows
 argus-windows-amd64.exe
 ```
+
+### Or install the binaries using the following commands: (curl is required)
+
+```bash
+# Linux
+curl -L -o argus https://github.com/vishnuprasad2004/argus/releases/download/v0.1.0/argus-linux-amd64
+# Windows
+curl -L -o argus curl -L -o argus.exe https://github.com/vishnuprasad2004/argus/releases/download/v0.1.0/argus-windows-amd64.exe
+```
+
 
 ### First run
 
