@@ -30,19 +30,29 @@ Analyze Docker containers, running processes, and Kubernetes pods.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// try to load config — if missing key, wizard handles it
 		cfg, err := config.Load()
-
-		var llm *agents.GeminiClient
-
-		if err != nil {
-			// config missing or no key — launch with nil LLM
-			// wizard will collect the key and restart
-			llm = nil
-		} else {
-			llm, err = agents.CreateAgentWithConfig(cfg)
-			if err != nil {
-				return fmt.Errorf("failed to init Gemini: %w", err)
+    if err != nil {
+			// don't launch TUI with nil llm
+			// IsFirstRun check handles wizard path
+			if !config.IsFirstRun() {
+					return fmt.Errorf("config error: %w\n\nRun argus again to go through setup.", err)
 			}
+			// first run — launch wizard with nil llm, wizard will init it
+			p := tea.NewProgram(
+					tui.NewRootModel(nil),
+					tea.WithAltScreen(),
+			)
+			_, err := p.Run()
+			return err
+    }
+
+    // config loaded — init LLM
+    llm, err := agents.CreateAgentWithConfig(cfg)
+		if llm == nil {
+    	fmt.Println("DEBUG: llm is nil before launching TUI")
 		}
+    if err != nil {
+      return fmt.Errorf("failed to connect to Gemini: %w", err)
+    }
 
 		p := tea.NewProgram(
 			tui.NewRootModel(llm),

@@ -236,7 +236,7 @@ func (m FileChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 	return tea.Batch(
 		m.watchOrchestratorEvents(),
 		func() tea.Msg {
-			result, err := m.orch.Run(m.ctx, msg.Input, logs)
+			result, err := m.orch.Run(m.ctx, msg.Input, logs, "log files")
 			return queryResultMsg{result: result, err: err}
 		},
 	)

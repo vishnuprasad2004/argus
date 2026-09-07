@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vishnuprasad2004/argus/internal/config"
+	"github.com/vishnuprasad2004/argus/internal/memory"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
 )
 
@@ -16,6 +17,9 @@ const (
 	wizardStepWelcome wizardStep = iota
 	wizardStepAPIKey
 	wizardStepModel
+	wizardStepStack
+	wizardStepServices
+	wizardStepPrefs
 	wizardStepSaving
 	wizardStepDone
 )
@@ -26,38 +30,56 @@ type WizardDoneMsg struct{}
 type wizardSavedMsg struct{ err error }
 
 type SetupWizardModel struct {
-	step     wizardStep
-	apiInput textinput.Model
-	cursor   int // model selector cursor
-	models   []config.ModelOption
-	apiKey   string
-	model    string
-	err      string
-	spinner  spinner.Model
-	width    int
+	step          wizardStep
+	apiInput      textinput.Model
+	stackInput    textinput.Model
+	servicesInput textinput.Model
+	prefsInput    textinput.Model
+	cursor        int // model selector cursor
+	models        []config.ModelOption
+	apiKey        string
+	model         string
+	err           string
+	spinner       spinner.Model
+	width         int
 }
 
 func NewSetupWizardModel() SetupWizardModel {
 	ti := textinput.New()
 	ti.Placeholder = "AIza..."
 	ti.Focus()
-	ti.PromptStyle      = styles.Brand
-	ti.TextStyle        = styles.Base
+	ti.PromptStyle = styles.Brand
+	ti.TextStyle = styles.Base
 	ti.PlaceholderStyle = styles.Muted
-	ti.Prompt           = "❯ "
-	ti.CharLimit        = 200
-	ti.Width            = 55
-	ti.EchoMode        = textinput.EchoPassword // hide key while typing
+	ti.Prompt = "❯ "
+	ti.CharLimit = 200
+	ti.Width = 55
+	ti.EchoMode = textinput.EchoPassword // hide key while typing
 
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
-	sp.Style   = styles.Muted
+	sp.Style = styles.Muted
+
+	makeInput := func(placeholder string) textinput.Model {
+		ti := textinput.New()
+		ti.Placeholder = placeholder
+		ti.PromptStyle = styles.Brand
+		ti.TextStyle = styles.Base
+		ti.PlaceholderStyle = styles.Muted
+		ti.Prompt = "❯ "
+		ti.CharLimit = 200
+		ti.Width = 55
+		return ti
+	}
 
 	return SetupWizardModel{
-		step:    wizardStepWelcome,
-		apiInput: ti,
-		models:  config.Models(),
-		spinner: sp,
+		step:          wizardStepWelcome,
+		apiInput:      ti,
+		models:        config.Models(),
+		stackInput:    makeInput("Node.js, Python, Go, MongoDB..."),
+		servicesInput: makeInput("nginx, payments-api, auth-service..."),
+		prefsInput:    makeInput("always suggest kubectl commands..."),
+		spinner:       sp,
 	}
 }
 
@@ -74,7 +96,7 @@ func (m SetupWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wizardSavedMsg:
 		if msg.err != nil {
-			m.err  = msg.err.Error()
+			m.err = msg.err.Error()
 			m.step = wizardStepAPIKey // go back on error
 			return m, nil
 		}
@@ -103,13 +125,42 @@ func (m SetupWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 	return m, nil
 				// }
 				m.apiKey = key
-				m.err    = ""
-				m.step   = wizardStepModel
+				m.err = ""
+				m.step = wizardStepModel
 				return m, nil
 			case "esc":
 				// allow going back to welcome
 				m.step = wizardStepWelcome
 				return m, nil
+			}
+
+		case wizardStepStack:
+			switch msg.String() {
+			case "enter":
+				m.step = wizardStepServices
+				m.stackInput.Blur()
+				m.servicesInput.Focus()
+			case "esc":
+				m.step = wizardStepModel
+			}
+
+		case wizardStepServices:
+			switch msg.String() {
+			case "enter":
+				m.step = wizardStepPrefs
+				m.servicesInput.Blur()
+				m.prefsInput.Focus()
+			case "esc":
+				m.step = wizardStepStack
+			}
+
+		case wizardStepPrefs:
+			switch msg.String() {
+			case "enter":
+				m.step = wizardStepSaving
+				return m, m.saveAll() // saves config + agent.md
+			case "esc":
+				m.step = wizardStepServices
 			}
 
 		case wizardStepModel:
@@ -124,7 +175,7 @@ func (m SetupWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				m.model = m.models[m.cursor].ID
-				m.step  = wizardStepSaving
+				m.step = wizardStepSaving
 				return m, m.saveConfig()
 			case "esc":
 				m.step = wizardStepAPIKey
@@ -187,6 +238,30 @@ func (m SetupWizardModel) View() string {
 		b.WriteString(styles.HRuleStr(width) + "\n")
 		b.WriteString("  " + styles.Muted.Render("enter confirm   esc back") + "\n")
 
+	case wizardStepStack:
+		b.WriteString("  " + styles.Brand.Render("Step 3 of 5 — Your Stack") + "\n\n")
+		b.WriteString("  " + styles.Muted.Render("What languages, frameworks, and databases do you use?") + "\n\n")
+		b.WriteString(styles.HRuleStr(width) + "\n\n")
+		b.WriteString("  " + m.stackInput.View() + "\n\n")
+		b.WriteString(styles.HRuleStr(width) + "\n")
+		b.WriteString("  " + styles.Muted.Render("enter continue   esc back") + "\n")
+
+	case wizardStepServices:
+		b.WriteString("  " + styles.Brand.Render("Step 4 of 5 — Your Services") + "\n\n")
+		b.WriteString("  " + styles.Muted.Render("List your services, separated by commas") + "\n\n")
+		b.WriteString(styles.HRuleStr(width) + "\n\n")
+		b.WriteString("  " + m.servicesInput.View() + "\n\n")
+		b.WriteString(styles.HRuleStr(width) + "\n")
+		b.WriteString("  " + styles.Muted.Render("enter continue   esc back") + "\n")
+
+	case wizardStepPrefs:
+		b.WriteString("  " + styles.Brand.Render("Step 5 of 5 — Preferences") + "\n\n")
+		b.WriteString("  " + styles.Muted.Render("Any preferences for how Argus should help? (optional)") + "\n\n")
+		b.WriteString(styles.HRuleStr(width) + "\n\n")
+		b.WriteString("  " + m.prefsInput.View() + "\n\n")
+		b.WriteString(styles.HRuleStr(width) + "\n")
+		b.WriteString("  " + styles.Muted.Render("enter finish   esc back") + "\n")
+
 	case wizardStepModel:
 		b.WriteString("  " + styles.Brand.Render("Step 2 of 2 — Choose a Model") + "\n\n")
 		b.WriteString("  " + styles.Muted.Render("You can change this later in ~/.argus/config.yaml") + "\n\n")
@@ -195,13 +270,13 @@ func (m SetupWizardModel) View() string {
 		for i, opt := range m.models {
 			if i == m.cursor {
 				cursor := styles.Brand.Render("❯ ")
-				label  := styles.SelectorItemActive.Render(opt.Label)
-				id     := styles.Muted.Render("  " + opt.ID)
-				desc   := styles.Muted.Render("\n    " + opt.Description)
+				label := styles.SelectorItemActive.Render(opt.Label)
+				id := styles.Muted.Render("  " + opt.ID)
+				desc := styles.Muted.Render("\n    " + opt.Description)
 				b.WriteString("  " + cursor + label + id + desc + "\n\n")
 			} else {
 				label := styles.SelectorItem.Render(opt.Label)
-				id    := styles.Muted.Render("  " + opt.ID)
+				id := styles.Muted.Render("  " + opt.ID)
 				b.WriteString("    " + label + id + "\n\n")
 			}
 		}
@@ -219,5 +294,62 @@ func (m SetupWizardModel) View() string {
 		b.WriteString("  " + styles.Muted.Render("Launching Argus...") + "\n")
 	}
 
+	return b.String()
+}
+
+func (m SetupWizardModel) saveAll() tea.Cmd {
+	return func() tea.Msg {
+		// save config.yaml
+		if err := config.Save(m.apiKey, m.model); err != nil {
+			return wizardSavedMsg{err: err}
+		}
+
+		// build and save agent.md from wizard answers
+		store, err := memory.NewStore()
+		if err != nil {
+			return wizardSavedMsg{err: err}
+		}
+
+		agentContent := buildAgentMd(
+			m.stackInput.Value(),
+			m.servicesInput.Value(),
+			m.prefsInput.Value(),
+		)
+		if err := store.WriteAgent(agentContent); err != nil {
+			return wizardSavedMsg{err: err}
+		}
+
+		return wizardSavedMsg{err: nil}
+	}
+}
+
+func buildAgentMd(stack, services, prefs string) string {
+	var b strings.Builder
+	b.WriteString("# Argus Agent Context\n")
+	b.WriteString("> Auto-generated by setup wizard. Edit freely.\n\n")
+
+	if stack != "" {
+		b.WriteString("## My Stack\n")
+		b.WriteString(stack + "\n\n")
+	}
+
+	if services != "" {
+		b.WriteString("## Known Services\n")
+		// split by comma and format as list
+		for _, svc := range strings.Split(services, ",") {
+			svc = strings.TrimSpace(svc)
+			if svc != "" {
+				b.WriteString("- " + svc + "\n")
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	if prefs != "" {
+		b.WriteString("## Preferences\n")
+		b.WriteString(prefs + "\n\n")
+	}
+
+	b.WriteString("## Team Context\n\n")
 	return b.String()
 }

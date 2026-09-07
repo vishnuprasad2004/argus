@@ -49,6 +49,11 @@ func CreateAgent(cfg *config.Config) (*GeminiClient, error) {
 
 // Generate is a simple single-turn call — used by sub-agents
 func (g *GeminiClient) Generate(ctx context.Context, prompt string) (string, error) {
+	
+	if g == nil || g.client == nil {
+    return "", fmt.Errorf("Gemini client is not initialized — check your GEMINI_API_KEY in ~/.argus/config.yaml")
+  }
+	
 	result, err := g.client.Models.GenerateContent(ctx,
 		g.model,
 		genai.Text(prompt),
@@ -62,6 +67,10 @@ func (g *GeminiClient) Generate(ctx context.Context, prompt string) (string, err
 
 // Chat is a multi-turn call with history — used by orchestrator
 func (g *GeminiClient) Chat(ctx context.Context, system string, history []ConversationTurn, userMsg string) (string, error) {
+
+	if g == nil || g.client == nil {
+    return "", fmt.Errorf("Gemini client is not initialized — check your GEMINI_API_KEY in ~/.argus/config.yaml")
+  }
 	// build content history
 	var contents []*genai.Content
 
@@ -111,6 +120,11 @@ func (g *GeminiClient) ChatStream(
     userMsg string,
     onChunk func(string), // called per chunk — TUI uses this to render tokens
 ) (string, error) {
+
+		if g == nil || g.client == nil {
+      return "", fmt.Errorf("Gemini client is not initialized — check your GEMINI_API_KEY in ~/.argus/config.yaml")
+    }
+
     contents, cfg := g.buildContents(system, history, userMsg)
 
     iter := g.client.Models.GenerateContentStream(ctx, g.model, contents, cfg)

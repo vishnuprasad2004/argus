@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/vishnuprasad2004/argus/internal/memory"
 	"github.com/vishnuprasad2004/argus/internal/types"
 	"github.com/vishnuprasad2004/argus/pipeline"
 )
@@ -15,6 +17,7 @@ type Orchestrator struct {
 	statsAgent *StatsAgent
 	Events     chan AgentEvent // TUI listens to this
 	history    []ConversationTurn
+	memory     *memory.Store // the procedural memory for providing more context
 }
 
 var SYSTEM_PROMPT = `
@@ -41,16 +44,25 @@ Otherwise just reply normally.
 `
 
 func NewOrchestrator(client *GeminiClient) *Orchestrator {
+	if client == nil {
+		return &Orchestrator{
+			Events: make(chan AgentEvent, 10),
+			// client stays nil — Chat() will return error not panic
+    }
+	}
+	store, _ := memory.NewStore()
+
 	return &Orchestrator{
 		client:     client,
 		logAgent:   &LogAnalysisAgent{ client: client },
 		rcaAgent:   &RCAAgent{ client: client },
 		statsAgent: &StatsAgent{}, // no LLM needed
 		Events:     make(chan AgentEvent, 10),
+		memory:     store,
 	}
 }
 
-func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEntry) (string, error) {
+func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEntry, sourceNames ...string) (string, error) {
 
 	// add user message to history
 	o.history = append(o.history, ConversationTurn{
@@ -75,34 +87,9 @@ func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEn
 	}
 
 	// THE key prompt — orch is the agent, tools are just capabilities
-	system_prompt := fmt.Sprintf(`
-You are Argus, an expert SRE AI assistant embedded in a terminal tool.
-You are having a conversation with a developer about their running service.
-
-You have access to these tools (use them ONLY when the user's question requires it):
-- log_analysis: reads and extracts patterns/errors from logs. Use when user asks about errors, failures, anomalies.
-- stats: counts log levels, computes error rate. Use when user asks for numbers/metrics/counts.
-- rca: identifies root cause from log analysis. Use when user asks WHY something failed.
-
-Rules:
-- If the user is just chatting ("ok thanks", "got it", "cool") — reply conversationally, NO tools.
-- If the user asks a follow-up on your previous answer — answer from context, NO tools unless new info needed.
-- Only call a tool if the answer genuinely requires reading the logs.
-- Be concise. No markdown. You are in a terminal.
-- You remember the full conversation below.
-
-Conversation history:
-%s
-%s
-
-When you need a tool, reply EXACTLY in this format and nothing else:
-TOOL: tool_name
-REASON: why you need it
-
-Otherwise just reply normally.
-`, historyStr.String(), logContext)
-
 	userMsg := fmt.Sprintf("%s\n\n%s", query, logContext)
+
+	system_prompt := o.buildSystemPrompt(query, sourceNames)
 
 	// single LLM call — orch decides everything
 	response, err := o.client.Chat(ctx, system_prompt, o.history[:len(o.history)-1], userMsg)
@@ -127,6 +114,37 @@ Otherwise just reply normally.
 	return final, nil
 }
 
+
+
+func (o *Orchestrator) buildSystemPrompt(query string, sourceNames []string) string {
+	base := `You are Argus, an expert SRE AI assistant in a terminal tool.
+You have access to these tools (use ONLY when genuinely needed):
+- log_analysis: extracts errors and patterns from logs
+- stats: counts log levels and error rate (zero cost)  
+- rca: identifies root cause from log analysis
+
+Rules:
+- Casual replies → respond conversationally, NO tools
+- Follow-up questions → answer from context, NO tools unless needed
+- Only call a tool if the answer requires reading logs
+- Be concise. Use markdown.
+
+When you need a tool, reply EXACTLY:
+TOOL: tool_name
+REASON: why
+
+Otherwise reply normally.`
+
+	// inject memory context if available
+	if o.memory != nil {
+		memCtx, err := o.memory.Build(query, sourceNames)
+		if err == nil {
+			base += memCtx.ToPromptString()
+		}
+	}
+
+	return base
+}
 
 
 
@@ -250,4 +268,68 @@ func (o *Orchestrator) fallbackToStats(ctx context.Context, logs []types.LogEntr
         return "", originalErr // both failed, return original error
     }
     return out.Result + "\n\n⚠ AI analysis unavailable", nil
+}
+
+
+// parseRememberCommand detects "remember that..." queries
+// returns section and fact to store
+func parseRememberCommand(query string) (bool, string, string) {
+	lower := strings.ToLower(strings.TrimSpace(query))
+
+	prefixes := []string{
+		"remember that ",
+		"remember ",
+		"note that ",
+		"keep in mind ",
+		"don't forget that ",
+	}
+
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			fact := query[len(prefix):]
+
+			// guess section from content
+			section := guessSection(fact)
+			return true, section, fact
+		}
+	}
+	return false, "", ""
+}
+
+// guessSection picks the right agent.md section for a fact
+func guessSection(fact string) string {
+	lower := strings.ToLower(fact)
+	switch {
+	case strings.ContainsAny(lower, "port runs service api"):
+		return "Known Services"
+	case strings.Contains(lower, "prefer") ||
+		strings.Contains(lower, "always") ||
+		strings.Contains(lower, "never"):
+		return "Preferences"
+	case strings.Contains(lower, "team") ||
+		strings.Contains(lower, "prod") ||
+		strings.Contains(lower, "cloud"):
+		return "Team Context"
+	default:
+		return "My Stack"
+	}
+}
+
+// handleRemember stores the fact and responds conversationally
+func (o *Orchestrator) handleRemember(section, fact string) (string, error) {
+	if o.memory == nil {
+		return "Memory not available — check ~/.argus/ directory", nil
+	}
+
+	if err := o.memory.AppendAgent(section, fact); err != nil {
+		return "", fmt.Errorf("remember: %w", err)
+	}
+
+	o.Events <- AgentEvent{
+		Type:    EventAnswer,
+		Tool:   "memory",
+		Message: fmt.Sprintf("Got it — saved to %s in agent.md", section),
+	}
+
+	return fmt.Sprintf("Got it. I've noted that under **%s** in your agent memory.\nI'll use this in future sessions.", section), nil
 }
