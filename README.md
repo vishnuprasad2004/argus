@@ -371,6 +371,7 @@ Free tier with no credit card required. Argus is a developer tool — adding a b
 - [x] Token streaming responses
 - [x] Secret scrubbing pipeline
 - [x] First-run setup wizard
+- [ ] implementing a metrics dashboard - via docker metrics/openTel/prometheous
 - [ ] Kubernetes pod log analysis (v0.2.0)
 - [ ] Local LLM via Ollama (no data leaves machine)
 - [ ] Multi-model support (Claude, GPT-4 via config)
