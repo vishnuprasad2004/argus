@@ -10,6 +10,7 @@ import (
 	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/collectors/docker"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
+	"github.com/vishnuprasad2004/argus/internal/tui/layout"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
 	"github.com/vishnuprasad2004/argus/internal/types"
 )
@@ -35,6 +36,12 @@ type streamChunkMsg struct {
 	chunk string
 }
 
+type appendAnswerMsg struct {
+	content string
+}
+
+type clearAnswersMsg struct{}
+
 // ── model ─────────────────────────────────────────────────────────────────
 
 type ChatModel struct {
@@ -57,6 +64,7 @@ type ChatModel struct {
 
 	// to manage which panel is focused for keyboard input when scrolling
 	focusedPanel int // 0 = logs, 1 = answers
+	dims         layout.Dims
 
 	// live stream channels — set when streamStartedMsg arrives
 	liveCh    <-chan types.LogEntry
@@ -152,19 +160,26 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	// orchestrator finished — re-enable input and show answer
-	case queryResultMsg:
-		m.queryBar.Enable()
-		if msg.err != nil {
-			errLine := styles.LogError.Render("✗ Error: " + msg.err.Error())
-			m.answerContent = append(m.answerContent, errLine)
-			m.refreshAnswerVP()
-		} else {
-			rendered := styles.RenderMarkdown(msg.result, m.width-4)
-			answer := styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
-			m.answerContent = append(m.answerContent, answer)
-			m.refreshAnswerVP()
-		}
-		m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+case queryResultMsg:
+    m.queryBar.Enable()
+    if msg.err != nil {
+        // error path — streaming didn't handle this
+        errLine := styles.LogError.Render("✗ Error: " + msg.err.Error())
+        m.answerContent = append(m.answerContent, errLine)
+        m.refreshAnswerVP()
+    }
+    // success path intentionally empty — EventAnswer handles it
+    m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+    return m, nil
+
+	case appendAnswerMsg:
+		m.answerContent = append(m.answerContent, msg.content)
+		m.refreshAnswerVP()
+		return m, nil
+
+	case clearAnswersMsg:
+		m.answerContent = nil
+		m.answerVP.SetContent("")
 		return m, nil
 
 	// agent event — forward to thinking indicator
@@ -276,46 +291,55 @@ func (m ChatModel) waitForNextLog() tea.Cmd {
 func (m ChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 	userLine := styles.Brand.Render("❯ you") + "\n" +
 		styles.WrapText(msg.Input, m.width-4)
-	m.answerContent = append(m.answerContent, userLine)
-	m.refreshAnswerVP()
+
+	// DON'T do: m.answerContent = append(m.answerContent, userLine)
+	// that mutates a copy — use a message instead so Update() handles it
+
+	var cmds []tea.Cmd
+
+	// fire appendAnswerMsg so the real model gets the user line
+	cmds = append(cmds, func() tea.Msg {
+		return appendAnswerMsg{content: userLine}
+	})
 
 	if msg.IsPreset {
 		switch msg.Input {
 		case "/stats":
 			logs := m.logViewer.Logs()
-			out, err := m.orch.RunStats(context.Background(), logs)
-			result := ""
-			if err != nil {
-				result = "stats error: " + err.Error()
-			} else {
-				result = out.Result
-			}
-			return func() tea.Msg { return queryResultMsg{result: result} }
+			cmds = append(cmds, func() tea.Msg {
+				out, err := m.orch.RunStats(context.Background(), logs)
+				if err != nil {
+					return queryResultMsg{err: err}
+				}
+				return queryResultMsg{result: out.Result}
+			})
+			return tea.Batch(cmds...)
 
 		case "/clear":
-			m.answerContent = nil
-			m.refreshAnswerVP()
-			return nil
+			cmds = append(cmds, func() tea.Msg {
+				return clearAnswersMsg{}
+			})
+			return tea.Batch(cmds...)
 
 		case "/quit":
 			m.cancel()
 			return tea.Quit
 
 		default:
-			return func() tea.Msg {
+			cmds = append(cmds, func() tea.Msg {
 				return queryResultMsg{result: "unknown command. available: /stats /clear /quit"}
-			}
+			})
+			return tea.Batch(cmds...)
 		}
 	}
 
-	// natural language — disable input while orchestrator runs
 	m.queryBar.Disable()
 	logs := m.logViewer.Logs()
-
-	return tea.Batch(
-		m.watchOrchestratorEvents(),        // forwards agent events to thinking indicator
-		m.runOrchestrator(msg.Input, logs), // runs LLM query
+	cmds = append(cmds,
+		m.watchOrchestratorEvents(),
+		m.runOrchestrator(msg.Input, logs),
 	)
+	return tea.Batch(cmds...)
 }
 
 func (m ChatModel) runOrchestrator(query string, logs []types.LogEntry) tea.Cmd {
@@ -325,8 +349,14 @@ func (m ChatModel) runOrchestrator(query string, logs []types.LogEntry) tea.Cmd 
 				err: fmt.Errorf("AI not configured — add GEMINI_API_KEY to ~/.argus/config.yaml"),
 			}
 		}
-		result, err := m.orch.Run(m.ctx, query, logs, m.target.Name)
-		return queryResultMsg{result: result, err: err}
+		_, err := m.orch.Run(m.ctx, query, logs, m.target.Name)
+		if err != nil {
+			// only send error result — success is handled by EventChunk/EventAnswer
+			return queryResultMsg{err: err}
+		}
+		// success case: streaming already handled it via EventChunk → EventAnswer
+		// return nil so no duplicate rendering happens
+		return nil
 	}
 }
 
@@ -346,25 +376,49 @@ func (m ChatModel) watchOrchestratorEvents() tea.Cmd {
 // ── layout ────────────────────────────────────────────────────────────────
 
 func (m *ChatModel) relayout() {
-	// split height into two panels
-	logHeight := int(float64(m.height) * 0.45)
-	answerHeight := int(float64(m.height) * 0.35)
+	m.dims = layout.Compute(m.width, m.height)
 
-	// log viewer
-	if m.logViewer == nil {
-		lv := components.NewLogViewer(m.width-4, logHeight)
-		m.logViewer = &lv
-	} else {
-		m.logViewer.Resize(m.width-4, logHeight)
-	}
+	if m.dims.IsWide() {
+		// wide: log pane left, insights pane right
+		logW := m.dims.LogPaneWidth - 2
+		logH := m.dims.LogPaneHeight
+		insW := m.dims.InsightsPaneWidth - 2
+		insH := m.dims.InsightsPaneHeight
 
-	// answer viewport
-	if !m.answerReady {
-		m.answerVP = viewport.New(m.width-4, answerHeight)
-		m.answerReady = true
+		if m.logViewer == nil {
+			lv := components.NewLogViewer(logW, logH)
+			m.logViewer = &lv
+		} else {
+			m.logViewer.Resize(logW, logH)
+		}
+
+		if !m.answerReady {
+			m.answerVP = viewport.New(insW, insH)
+			m.answerReady = true
+		} else {
+			m.answerVP.Width = insW
+			m.answerVP.Height = insH
+		}
+
 	} else {
-		m.answerVP.Width = m.width - 4
-		m.answerVP.Height = answerHeight
+		// narrow: single pane, tabs switch between log and insights
+		paneW := m.dims.PaneWidth - 2
+		paneH := m.dims.PaneHeight
+
+		if m.logViewer == nil {
+			lv := components.NewLogViewer(paneW, paneH)
+			m.logViewer = &lv
+		} else {
+			m.logViewer.Resize(paneW, paneH)
+		}
+
+		if !m.answerReady {
+			m.answerVP = viewport.New(paneW, paneH)
+			m.answerReady = true
+		} else {
+			m.answerVP.Width = paneW
+			m.answerVP.Height = paneH
+		}
 	}
 }
 
@@ -382,9 +436,7 @@ func (m ChatModel) View() string {
 		return "\n  " + styles.Muted.Render("initializing...")
 	}
 
-	var b strings.Builder
-
-	// ── header ────────────────────────────────────────────────────────
+	// ── header — same as before ───────────────────────────────────────
 	dot := styles.StatusDot(m.target.Status == "running")
 	header := fmt.Sprintf("  %s  %s %s  %s  %s\n",
 		styles.Brand.Render("argus"),
@@ -393,55 +445,23 @@ func (m ChatModel) View() string {
 		styles.Muted.Render(m.target.Image),
 		styles.Muted.Render("tab: switch panel  esc: back  /stats /clear /quit"),
 	)
-	b.WriteString(header)
-
-	// ── log panel — orange rule when focused ──────────────────────────
-	if m.focusedPanel == 0 {
-		b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
-	} else {
-		b.WriteString(styles.HRuleStr(m.width) + "\n")
-	}
-	b.WriteString(m.logViewer.View())
-	b.WriteString("\n")
-
-	// ── answer panel — orange rule when focused ───────────────────────
-	if m.focusedPanel == 1 {
-		b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
-	} else {
-		b.WriteString(styles.HRuleStr(m.width) + "\n")
-	}
-
-	if m.answerReady {
-		if len(m.answerContent) == 0 {
-			b.WriteString("  " + styles.Muted.Render("ask a question below...") + "\n")
-		} else {
-			b.WriteString(m.answerVP.View())
-			b.WriteString("\n")
-		}
-	}
-
-	b.WriteString(styles.HRuleStr(m.width) + "\n")
 
 	// ── thinking indicator ────────────────────────────────────────────
-	if t := m.thinking.View(); t != "" {
-		b.WriteString(t + "\n")
-	}
+	thinkingStr := m.thinking.View()
 
 	// ── query bar ─────────────────────────────────────────────────────
-	b.WriteString("\n" + m.queryBar.View() + "\n")
+	queryStr := "\n" + m.queryBar.View() + "\n"
 
-	// ── scroll hint ───────────────────────────────────────────────────
+	// ── footer shortcuts ──────────────────────────────────────────────
 	focused := map[int]string{0: "logs", 1: "answers"}[m.focusedPanel]
-
 	shortcuts := []struct{ key, desc string }{
 		{"↑↓", "scroll"},
 		{"tab", "switch panel"},
 		{"esc", "back"},
-		{"/stats", "error counts"},
-		{"/clear", "clear chat"},
+		{"/stats", "counts"},
+		{"/clear", "clear"},
 		{"/quit", "quit"},
 	}
-
 	var keys, descs strings.Builder
 	for i, s := range shortcuts {
 		keys.WriteString(styles.Brand.Render(s.key))
@@ -451,11 +471,73 @@ func (m ChatModel) View() string {
 			descs.WriteString(styles.Muted.Render("  ·  "))
 		}
 	}
+	footer := styles.HRuleStr(m.width) + "\n" +
+		"  " + keys.String() + "\n" +
+		"  " + descs.String() + "\n" +
+		"  " + styles.Muted.Render("panel: "+focused) + "\n"
 
-	b.WriteString(styles.HRuleStr(m.width) + "\n")
-	b.WriteString("  " + keys.String() + "\n")
-	b.WriteString("  " + descs.String() + "\n")
-	b.WriteString("  " + styles.Muted.Render("panel: "+focused) + "\n")
+	// ── insights pane content ─────────────────────────────────────────
+	var insightsContent string
+	if len(m.answerContent) == 0 {
+		insightsContent = "  " + styles.Muted.Render("ask a question below...")
+	} else {
+		insightsContent = m.answerVP.View()
+	}
+	if thinkingStr != "" {
+		insightsContent += "\n" + thinkingStr
+	}
+
+	// ── assemble by layout mode ───────────────────────────────────────
+	var b strings.Builder
+	b.WriteString(header)
+
+	if m.dims.IsWide() {
+		// ── wide: log left, insights right ───────────────────────────
+		logBorder := styles.HRuleStr(m.dims.LogPaneWidth)
+		if m.focusedPanel == 0 {
+			logBorder = styles.Brand.Render(strings.Repeat("─", m.dims.LogPaneWidth))
+		}
+
+		insBorder := styles.HRuleStr(m.dims.InsightsPaneWidth)
+		if m.focusedPanel == 1 {
+			insBorder = styles.Brand.Render(strings.Repeat("─", m.dims.InsightsPaneWidth))
+		}
+
+		// build left column: rule + log pane
+		left := logBorder + "\n" + m.logViewer.View()
+
+		// build right column: rule + insights
+		right := insBorder + "\n" + insightsContent
+
+		// join horizontally — lipgloss aligns tops
+		divider := layout.Divider(m.dims.LogPaneHeight + 1) // +1 for rule row
+		panes := layout.JoinPanes(left, divider, right)
+
+		b.WriteString(panes)
+		b.WriteString("\n")
+
+	} else {
+		// ── narrow: tab bar + single active pane ─────────────────────
+		b.WriteString(layout.TabBar(m.dims.PaneWidth, m.focusedPanel))
+		b.WriteString("\n")
+
+		if m.focusedPanel == 0 {
+			b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
+			b.WriteString(m.logViewer.View())
+		} else {
+			b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
+			b.WriteString(insightsContent)
+		}
+		b.WriteString("\n")
+	}
+
+	if thinkingStr != "" && m.dims.IsWide() {
+		// in wide mode thinking already rendered in right pane
+		// skip here to avoid duplication
+	}
+
+	b.WriteString(queryStr)
+	b.WriteString(footer)
 
 	return b.String()
 }
