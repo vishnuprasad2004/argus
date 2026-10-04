@@ -125,7 +125,7 @@ func (m ContainerSelectModel) View() string {
     out  := title + "\n" + hint + "\n\n"
 
     for i, t := range m.targets {
-        running := t.Status == "running"
+        running := t.IsLive
         dot     := styles.StatusDot(running)
         status  := styles.Muted.Render(t.Status)
 

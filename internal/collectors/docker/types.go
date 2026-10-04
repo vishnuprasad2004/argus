@@ -19,4 +19,5 @@ type ContainerTarget struct {
 	Name   string
 	Image  string
 	Status string
+	IsLive bool
 }

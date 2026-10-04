@@ -45,8 +45,13 @@ func (d *DockerCollector) ListContainers(ctx context.Context) ([]ContainerTarget
 			Name:   strings.TrimPrefix(c.Names[0], "/"), // docker adds "/" prefix
 			Image:  c.Image,
 			Status: c.Status,
+			IsLive: isContainerRunning(c.Status),
 		}
 	}
 	return result, nil
 }
 
+func isContainerRunning(status string) bool {
+    s := strings.ToLower(status)
+    return strings.HasPrefix(s, "up") || strings.Contains(s, "running")
+}

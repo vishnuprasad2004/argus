@@ -3,8 +3,6 @@ package screens
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vishnuprasad2004/argus/agents"
@@ -13,6 +11,7 @@ import (
 	"github.com/vishnuprasad2004/argus/internal/tui/layout"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
 	"github.com/vishnuprasad2004/argus/internal/types"
+	"strings"
 )
 
 // ── message types ─────────────────────────────────────────────────────────
@@ -23,10 +22,9 @@ type queryResultMsg struct {
 	result string
 	err    error
 }
-type streamStartedMsg struct {
-	logCh <-chan types.LogEntry
-	errCh <-chan error
-}
+
+type streamReadyMsg struct{}
+
 type logsLoadedMsg struct {
 	logs      []types.LogEntry
 	collector *docker.DockerCollector
@@ -67,8 +65,7 @@ type ChatModel struct {
 	dims         layout.Dims
 
 	// live stream channels — set when streamStartedMsg arrives
-	liveCh    <-chan types.LogEntry
-	liveErrCh <-chan error
+	logFeed chan types.LogEntry
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -86,6 +83,7 @@ func NewChatModel(target docker.ContainerTarget, llm *agents.GeminiClient) ChatM
 		orch:     agents.NewOrchestrator(llm),
 		ctx:      ctx,
 		cancel:   cancel,
+		logFeed:  make(chan types.LogEntry, 500),
 		// logViewer intentionally nil here — initialized in relayout()
 		// because we don't know terminal dimensions yet
 	}
@@ -126,16 +124,14 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, entry := range msg.logs {
 			m.logViewer.AppendLog(entry)
 		}
-		if m.target.Status == "running" {
-			return m, m.startLiveStream(msg.collector)
-		}
-		return m, nil
+		if m.target.IsLive {
+      return m, m.startLiveStream(msg.collector)
+    }
+    return m, nil
 
 	// stream channels ready — store them and start read chain
-	case streamStartedMsg:
-		m.liveCh = msg.logCh
-		m.liveErrCh = msg.errCh
-		return m, m.waitForNextLog()
+	case streamReadyMsg:
+		return m, m.waitForNextLog() // start the chain
 
 	// one live log line arrived — append and schedule next read
 	case newLogEntryMsg:
@@ -155,22 +151,21 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}(),
 		}
 		m.logViewer.AppendLog(warning)
-		m.liveCh = nil
-		m.liveErrCh = nil
+		m.logFeed = nil // disable further reads
 		return m, nil
 
-	// orchestrator finished — re-enable input and show answer
-case queryResultMsg:
-    m.queryBar.Enable()
-    if msg.err != nil {
-        // error path — streaming didn't handle this
-        errLine := styles.LogError.Render("✗ Error: " + msg.err.Error())
-        m.answerContent = append(m.answerContent, errLine)
-        m.refreshAnswerVP()
-    }
-    // success path intentionally empty — EventAnswer handles it
-    m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
-    return m, nil
+		// orchestrator finished — re-enable input and show answer
+	case queryResultMsg:
+		m.queryBar.Enable()
+		if msg.err != nil {
+			// error path — streaming didn't handle this
+			errLine := styles.LogError.Render("✗ Error: " + msg.err.Error())
+			m.answerContent = append(m.answerContent, errLine)
+			m.refreshAnswerVP()
+		}
+		// success path intentionally empty — EventAnswer handles it
+		m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+		return m, nil
 
 	case appendAnswerMsg:
 		m.answerContent = append(m.answerContent, msg.content)
@@ -205,6 +200,18 @@ case queryResultMsg:
 	// keyboard shortcuts
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "f":
+			// only toggle follow when log pane is focused
+			if m.focusedPanel == 0 && m.logViewer != nil {
+				m.logViewer.ToggleFollow()
+			}
+			return m, nil
+
+		case "end":
+			if m.focusedPanel == 0 && m.logViewer != nil {
+				m.logViewer.EnableFollow()
+			}
+			return m, nil
 		case "tab":
 			m.focusedPanel = (m.focusedPanel + 1) % 2 // toggle between 0 and 1
 			return m, nil
@@ -241,14 +248,17 @@ case queryResultMsg:
 // loadLogs fetches last 200 lines from Docker — runs in goroutine via tea.Cmd
 func (m ChatModel) loadLogs() tea.Cmd {
 	return func() tea.Msg {
+		// fmt.Fprintf(os.Stderr, "DEBUG: loadLogs() called\n")
 		collector, err := docker.NewDockerCollector()
 		if err != nil {
+			// fmt.Fprintf(os.Stderr, "DEBUG: docker collector error: %v\n", err)
 			return queryResultMsg{err: fmt.Errorf("docker: %w", err)}
 		}
 
 		logs, err := collector.FetchLogs(context.Background(), m.target, docker.FetchOptions{
 			TailLines: "200",
 		})
+		// fmt.Fprintf(os.Stderr, "DEBUG: fetched %d logs, err=%v\n", len(logs), err)
 		if err != nil {
 			return queryResultMsg{err: fmt.Errorf("fetch logs: %w", err)}
 		}
@@ -260,28 +270,45 @@ func (m ChatModel) loadLogs() tea.Cmd {
 // startLiveStream starts Docker log stream — returns channels as a message
 // so they can be stored on the real model inside Update
 func (m ChatModel) startLiveStream(collector *docker.DockerCollector) tea.Cmd {
+	
 	return func() tea.Msg {
-		logCh, errCh := collector.Stream(m.ctx, m.target)
-		return streamStartedMsg{logCh: logCh, errCh: errCh}
+		logCh, _ := collector.Stream(m.ctx, m.target)
+		
+		go func() {
+			for {
+				select {
+				case entry, ok := <-logCh:
+					if !ok {
+						return
+					}
+					m.logFeed <- entry
+				case <-m.ctx.Done():
+					return
+				}
+			}
+		}()
+
+		return streamReadyMsg{}
 	}
 }
 
 // waitForNextLog blocks until one log line arrives then returns it
 // Update reschedules this after each line — creates a continuous chain
 func (m ChatModel) waitForNextLog() tea.Cmd {
-	if m.liveCh == nil {
-		return nil // no stream active
+	if m.logFeed == nil {
+		return nil
 	}
+	feed := m.logFeed // capture in closure — safe because chan is reference type
+	ctx := m.ctx
+
 	return func() tea.Msg {
 		select {
-		case entry, ok := <-m.liveCh:
+		case entry, ok := <-feed:
 			if !ok {
 				return streamEndedMsg{}
 			}
 			return newLogEntryMsg(entry)
-		case err := <-m.liveErrCh:
-			return streamEndedMsg{err: err}
-		case <-m.ctx.Done():
+		case <-ctx.Done():
 			return streamEndedMsg{}
 		}
 	}
@@ -437,7 +464,7 @@ func (m ChatModel) View() string {
 	}
 
 	// ── header — same as before ───────────────────────────────────────
-	dot := styles.StatusDot(m.target.Status == "running")
+	dot := styles.StatusDot(m.target.IsLive)
 	header := fmt.Sprintf("  %s  %s %s  %s  %s\n",
 		styles.Brand.Render("argus"),
 		dot,
@@ -456,6 +483,8 @@ func (m ChatModel) View() string {
 	focused := map[int]string{0: "logs", 1: "answers"}[m.focusedPanel]
 	shortcuts := []struct{ key, desc string }{
 		{"↑↓", "scroll"},
+		{"f", "follow"},
+		{"end", "jump end"},
 		{"tab", "switch panel"},
 		{"esc", "back"},
 		{"/stats", "counts"},

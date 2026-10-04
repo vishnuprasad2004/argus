@@ -13,14 +13,18 @@ type LogViewer struct {
     viewport viewport.Model  // bubbles viewport = scrollable panel
     logs     []types.LogEntry
     ready    bool            // false until we know terminal size
+
+    following   bool // true = auto-scroll on new logs
+    newLogCount int  // logs arrived while not following
 }
 
 func NewLogViewer(width, height int) LogViewer {
     vp := viewport.New(width, height)
     vp.SetContent("Loading logs...")
     return LogViewer{
-        viewport: vp,
-        ready:    true,
+        viewport:  vp,
+        ready:     true,
+        following: true, // start in follow mode
     }
 }
 
@@ -28,7 +32,13 @@ func NewLogViewer(width, height int) LogViewer {
 func (l *LogViewer) AppendLog(entry types.LogEntry) {
     l.logs = append(l.logs, entry)
     l.viewport.SetContent(l.renderLogs())
-    l.viewport.GotoBottom() // auto scroll — like tail -f behaviour
+
+    if l.following {
+        l.viewport.GotoBottom()
+        l.newLogCount = 0 // reset counter when following
+    } else {
+        l.newLogCount++ // count what the user is missing
+    }
 }
 
 // renderLogs turns []LogEntry into a styled string for the viewport
@@ -57,13 +67,46 @@ func (l *LogViewer) renderLogs() string {
 }
 
 func (l *LogViewer) Update(msg tea.Msg) tea.Cmd {
+    // detect scroll-up keys and disable follow
+    if keyMsg, ok := msg.(tea.KeyMsg); ok {
+        switch keyMsg.String() {
+        case "up", "k", "pgup", "ctrl+b":
+            // user is scrolling up — stop following
+            if l.following {
+                l.following = false
+            }
+        case "end", "G":
+            // user jumped to bottom — resume following
+            l.EnableFollow()
+        }
+    }
+
     var cmd tea.Cmd
     l.viewport, cmd = l.viewport.Update(msg)
     return cmd
 }
 
 func (l *LogViewer) View() string {
-    return l.viewport.View()
+    pane := l.viewport.View()
+
+    // show "↓ N new logs · press f to follow" when not following
+    if !l.following && l.newLogCount > 0 {
+        indicator := styles.Brand.Render(
+            fmt.Sprintf("  ↓ %d new log", l.newLogCount))
+        if l.newLogCount > 1 {
+            indicator += styles.Brand.Render("s")
+        }
+        indicator += styles.Muted.Render(" · f to follow")
+        return pane + "\n" + indicator
+    }
+
+    // show "FOLLOW" marker when following so user knows the mode
+    if l.following {
+        followBadge := styles.Muted.Render("  ↓ following")
+        return pane + "\n" + followBadge
+    }
+
+    return pane
 }
 
 // Resize updates dimensions when terminal is resized
@@ -77,3 +120,28 @@ func (l *LogViewer) Resize(width, height int) {
 func (l *LogViewer) Logs() []types.LogEntry {
     return l.logs
 }
+
+// ToggleFollow switches follow mode on or off
+// called when user presses f
+func (l *LogViewer) ToggleFollow() {
+    l.following = !l.following
+    if l.following {
+        // jumping back to bottom — reset counter
+        l.newLogCount = 0
+        l.viewport.GotoBottom()
+    }
+}
+
+// EnableFollow turns follow on and jumps to bottom
+// called when user presses End
+func (l *LogViewer) EnableFollow() {
+    l.following = true
+    l.newLogCount = 0
+    l.viewport.GotoBottom()
+}
+
+// IsFollowing returns current follow state
+func (l *LogViewer) IsFollowing() bool { return l.following }
+
+// NewLogCount returns how many logs arrived while not following
+func (l *LogViewer) NewLogCount() int { return l.newLogCount }
