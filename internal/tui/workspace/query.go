@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
@@ -41,6 +42,10 @@ func (c *Core) HandleQuery(
 	wrapWidth := c.Width - 4
 	if c.Dims.IsWide() {
 		wrapWidth = c.Dims.InsightsPaneWidth - 4
+	}
+
+	if wrapWidth <= 0 {
+		wrapWidth = 60 // safe fallback if dims not computed yet
 	}
 
 	userLine := styles.Brand.Render("❯ you") + "\n" +
@@ -122,7 +127,24 @@ func (c *Core) WatchOrchestratorEvents() tea.Cmd {
 // ── answer management ─────────────────────────────────────────────────────
 
 func (c *Core) RefreshAnswerVP() {
-	content := strings.Join(c.AnswerContent, "\n\n")
+	// wrap each answer to the correct width before joining
+	wrapWidth := c.Width - 4
+	if c.Dims.IsWide() {
+		wrapWidth = c.Dims.InsightsPaneWidth - 4
+	}
+	if wrapWidth <= 0 {
+		wrapWidth = 60
+	}
+
+	var wrapped []string
+	for _, answer := range c.AnswerContent {
+		// lipgloss Width forces hard wrap at column boundary
+		wrapped = append(wrapped, lipgloss.NewStyle().
+			Width(wrapWidth).
+			Render(answer))
+	}
+
+	content := strings.Join(wrapped, "\n\n")
 	c.AnswerVP.SetContent(content)
 	c.AnswerVP.GotoBottom()
 }

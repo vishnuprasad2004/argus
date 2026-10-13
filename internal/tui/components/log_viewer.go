@@ -67,16 +67,11 @@ func (l *LogViewer) renderLogs() string {
 }
 
 func (l *LogViewer) Update(msg tea.Msg) tea.Cmd {
-    // detect scroll-up keys and disable follow
     if keyMsg, ok := msg.(tea.KeyMsg); ok {
         switch keyMsg.String() {
         case "up", "k", "pgup", "ctrl+b":
-            // user is scrolling up — stop following
-            if l.following {
-                l.following = false
-            }
+            l.following = false // user scrolled up — stop following
         case "end", "G":
-            // user jumped to bottom — resume following
             l.EnableFollow()
         }
     }

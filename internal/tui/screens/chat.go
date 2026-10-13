@@ -3,13 +3,14 @@ package screens
 import (
 	"context"
 	"fmt"
-	"github.com/charmbracelet/bubbles/viewport"
+	// "github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/collectors/docker"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
-	"github.com/vishnuprasad2004/argus/internal/tui/layout"
+	// "github.com/vishnuprasad2004/argus/internal/tui/layout"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
+	"github.com/vishnuprasad2004/argus/internal/tui/workspace"
 	"github.com/vishnuprasad2004/argus/internal/types"
 	"strings"
 )
@@ -30,60 +31,22 @@ type logsLoadedMsg struct {
 	collector *docker.DockerCollector
 }
 
-type streamChunkMsg struct {
-	chunk string
-}
-
-type appendAnswerMsg struct {
-	content string
-}
-
-type clearAnswersMsg struct{}
-
 // ── model ─────────────────────────────────────────────────────────────────
 
 type ChatModel struct {
-	width       int
-	height      int
-	initialized bool
+	workspace.Core // all the shared workspace state and logic
 
-	// components — logViewer is a pointer so AppendLog mutations stick
-	logViewer *components.LogViewer
-	queryBar  components.QueryBar
-	thinking  components.ThinkingIndicator
-
-	// state
-	target docker.ContainerTarget
-	orch   *agents.Orchestrator
-
-	answerVP      viewport.Model
-	answerContent []string // raw strings, re-rendered into viewport
-	answerReady   bool
-
-	// to manage which panel is focused for keyboard input when scrolling
-	focusedPanel int // 0 = logs, 1 = answers
-	dims         layout.Dims
-
-	// live stream channels — set when streamStartedMsg arrives
-	logFeed chan types.LogEntry
-
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	streamingAnswer string
+	target  docker.ContainerTarget // the container we're attached to
+	logFeed chan types.LogEntry    // channel for live log lines from Docker
 }
 
 func NewChatModel(target docker.ContainerTarget, llm *agents.GeminiClient) ChatModel {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return ChatModel{
-		target:   target,
-		queryBar: components.NewQueryBar(),
-		thinking: components.NewThinkingIndicator(),
-		orch:     agents.NewOrchestrator(llm),
-		ctx:      ctx,
-		cancel:   cancel,
-		logFeed:  make(chan types.LogEntry, 500),
+		target:  target,
+		Core:    workspace.NewCore(ctx, cancel, llm),
+		logFeed: make(chan types.LogEntry, 500),
 		// logViewer intentionally nil here — initialized in relayout()
 		// because we don't know terminal dimensions yet
 	}
@@ -94,10 +57,7 @@ func NewChatModel(target docker.ContainerTarget, llm *agents.GeminiClient) ChatM
 func (m ChatModel) Init() tea.Cmd {
 	// only start spinner here — wait for WindowSizeMsg before fetching logs
 	// WindowSizeMsg always fires first in bubbletea, so this is safe
-	return tea.Batch(
-		m.thinking.Init(),
-		tea.WindowSize(), // forces WindowSizeMsg immediately
-	)
+	return m.Core.Init() //delegate the work to Core
 }
 
 // ── update ────────────────────────────────────────────────────────────────
@@ -109,12 +69,12 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// WindowSizeMsg fires immediately on start — this is where we bootstrap
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.relayout() // creates logViewer with correct dimensions
+		m.Width = msg.Width
+		m.Height = msg.Height
+		m.Relayout() // creates logViewer with correct dimensions
 
-		if !m.initialized {
-			m.initialized = true
+		if !m.Initialized {
+			m.Initialized = true
 			return m, m.loadLogs() // trigger Docker fetch now that size is known
 		}
 		return m, nil
@@ -122,12 +82,12 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// historical logs fetched — fill viewer, optionally start stream
 	case logsLoadedMsg:
 		for _, entry := range msg.logs {
-			m.logViewer.AppendLog(entry)
+			m.LogViewer.AppendLog(entry)
 		}
 		if m.target.IsLive {
-      return m, m.startLiveStream(msg.collector)
-    }
-    return m, nil
+			return m, m.startLiveStream(msg.collector)
+		}
+		return m, nil
 
 	// stream channels ready — store them and start read chain
 	case streamReadyMsg:
@@ -135,7 +95,7 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// one live log line arrived — append and schedule next read
 	case newLogEntryMsg:
-		m.logViewer.AppendLog(types.LogEntry(msg))
+		m.LogViewer.AppendLog(types.LogEntry(msg))
 		return m, m.waitForNextLog()
 
 	// stream ended — container stopped or error
@@ -150,94 +110,97 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return fmt.Sprintf("container %s stopped", m.target.Name)
 			}(),
 		}
-		m.logViewer.AppendLog(warning)
+		m.LogViewer.AppendLog(warning)
 		m.logFeed = nil // disable further reads
 		return m, nil
 
 		// orchestrator finished — re-enable input and show answer
-	case queryResultMsg:
-		m.queryBar.Enable()
-		if msg.err != nil {
+	case workspace.QueryResultMsg:
+		m.QueryBar.Enable()
+		if msg.Err != nil {
 			// error path — streaming didn't handle this
-			errLine := styles.LogError.Render("✗ Error: " + msg.err.Error())
-			m.answerContent = append(m.answerContent, errLine)
+			errLine := styles.LogError.Render("✗ Error: " + msg.Err.Error())
+			m.AnswerContent = append(m.AnswerContent, errLine)
 			m.refreshAnswerVP()
 		}
 		// success path intentionally empty — EventAnswer handles it
-		m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+		m.Thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
 		return m, nil
 
-	case appendAnswerMsg:
-		m.answerContent = append(m.answerContent, msg.content)
-		m.refreshAnswerVP()
+	case workspace.AppendAnswerMsg:
+		m.AnswerContent = append(m.AnswerContent, msg.Content)
+		m.RefreshAnswerVP()
 		return m, nil
 
-	case clearAnswersMsg:
-		m.answerContent = nil
-		m.answerVP.SetContent("")
+	case workspace.ClearAnswersMsg:
+		m.AnswerContent = nil
+		m.AnswerVP.SetContent("")
 		return m, nil
 
 	// agent event — forward to thinking indicator
 	case components.AgentEventMsg:
 		switch agents.EventType(msg.Type) {
 		case agents.EventChunk:
-			m.appendChunk(msg.Message)
-			cmd := m.thinking.Update(msg)
-			return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+			m.AppendChunk(msg.Message)
+			cmd := m.Thinking.Update(msg)
+			return m, tea.Batch(cmd, m.WatchOrchestratorEvents())
 		case agents.EventAnswer:
 			m.finalizeStreamingAnswer()
-			m.queryBar.Enable()
-			m.thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
+			m.QueryBar.Enable()
+			m.Thinking.Update(components.AgentEventMsg{Type: agents.EventAnswer})
 			return m, nil
 		default:
-			cmd := m.thinking.Update(msg)
-			return m, tea.Batch(cmd, m.watchOrchestratorEvents())
+			cmd := m.Thinking.Update(msg)
+			return m, tea.Batch(cmd, m.WatchOrchestratorEvents())
 		}
 	// user submitted query or preset command
 	case components.QuerySubmitMsg:
-		return m, m.handleQuery(msg)
+		logs := m.LogViewer.Logs()
+		return m, m.HandleQuery(msg, logs, m.presetHandler())
 
 	// keyboard shortcuts
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "f":
-			// only toggle follow when log pane is focused
-			if m.focusedPanel == 0 && m.logViewer != nil {
-				m.logViewer.ToggleFollow()
+		case "ctrl+f":
+			if m.FocusedPanel == 0 && m.LogViewer != nil {
+				m.LogViewer.ToggleFollow()
 			}
-			return m, nil
+			return m, nil // return m, nil
 
 		case "end":
-			if m.focusedPanel == 0 && m.logViewer != nil {
-				m.logViewer.EnableFollow()
+			if m.FocusedPanel == 0 && m.LogViewer != nil {
+				m.LogViewer.EnableFollow()
 			}
 			return m, nil
 		case "tab":
-			m.focusedPanel = (m.focusedPanel + 1) % 2 // toggle between 0 and 1
+			m.FocusedPanel = (m.FocusedPanel + 1) % 2 // toggle between 0 and 1
 			return m, nil
 		case "esc":
-			m.cancel()
+			m.Cancel()
 			return m, func() tea.Msg { return SwitchToSourceSelect{} }
 		}
 	}
 
 	// forward remaining messages to sub-components
 	// route scroll events to the focused panel
-	if m.focusedPanel == 0 {
-		if m.logViewer != nil {
-			logCmd := m.logViewer.Update(msg)
+	// scroll keys → focused panel only, NOT query bar
+	if isScrollKey(msg) {
+		if m.FocusedPanel == 0 && m.LogViewer != nil {
+			logCmd := m.LogViewer.Update(msg)
 			cmds = append(cmds, logCmd)
-		}
-	} else {
-		if m.answerReady {
+		} else if m.FocusedPanel == 1 && m.AnswerReady {
 			var cmd tea.Cmd
-			m.answerVP, cmd = m.answerVP.Update(msg)
+			m.AnswerVP, cmd = m.AnswerVP.Update(msg)
 			cmds = append(cmds, cmd)
 		}
+		thinkingCmd := m.Thinking.Update(msg)
+		cmds = append(cmds, thinkingCmd)
+		return m, tea.Batch(cmds...)
 	}
 
-	queryCmd := m.queryBar.Update(msg)
-	thinkingCmd := m.thinking.Update(msg)
+	// everything else → query bar + thinking
+	queryCmd := m.QueryBar.Update(msg)
+	thinkingCmd := m.Thinking.Update(msg)
 	cmds = append(cmds, queryCmd, thinkingCmd)
 
 	return m, tea.Batch(cmds...)
@@ -270,10 +233,10 @@ func (m ChatModel) loadLogs() tea.Cmd {
 // startLiveStream starts Docker log stream — returns channels as a message
 // so they can be stored on the real model inside Update
 func (m ChatModel) startLiveStream(collector *docker.DockerCollector) tea.Cmd {
-	
+
 	return func() tea.Msg {
-		logCh, _ := collector.Stream(m.ctx, m.target)
-		
+		logCh, _ := collector.Stream(m.Ctx, m.target)
+
 		go func() {
 			for {
 				select {
@@ -282,7 +245,7 @@ func (m ChatModel) startLiveStream(collector *docker.DockerCollector) tea.Cmd {
 						return
 					}
 					m.logFeed <- entry
-				case <-m.ctx.Done():
+				case <-m.Ctx.Done():
 					return
 				}
 			}
@@ -299,7 +262,7 @@ func (m ChatModel) waitForNextLog() tea.Cmd {
 		return nil
 	}
 	feed := m.logFeed // capture in closure — safe because chan is reference type
-	ctx := m.ctx
+	ctx := m.Ctx
 
 	return func() tea.Msg {
 		select {
@@ -314,152 +277,152 @@ func (m ChatModel) waitForNextLog() tea.Cmd {
 	}
 }
 
-// handleQuery routes /commands to presets and natural language to orchestrator
-func (m ChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
-	userLine := styles.Brand.Render("❯ you") + "\n" +
-		styles.WrapText(msg.Input, m.width-4)
+// // handleQuery routes /commands to presets and natural language to orchestrator
+// func (m ChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
+// 	userLine := styles.Brand.Render("❯ you") + "\n" +
+// 		styles.WrapText(msg.Input, m.Width-4)
 
-	// DON'T do: m.answerContent = append(m.answerContent, userLine)
-	// that mutates a copy — use a message instead so Update() handles it
+// 	// DON'T do: m.answerContent = append(m.answerContent, userLine)
+// 	// that mutates a copy — use a message instead so Update() handles it
 
-	var cmds []tea.Cmd
+// 	var cmds []tea.Cmd
 
-	// fire appendAnswerMsg so the real model gets the user line
-	cmds = append(cmds, func() tea.Msg {
-		return appendAnswerMsg{content: userLine}
-	})
+// 	// fire appendAnswerMsg so the real model gets the user line
+// 	cmds = append(cmds, func() tea.Msg {
+// 		return appendAnswerMsg{content: userLine}
+// 	})
 
-	if msg.IsPreset {
-		switch msg.Input {
-		case "/stats":
-			logs := m.logViewer.Logs()
-			cmds = append(cmds, func() tea.Msg {
-				out, err := m.orch.RunStats(context.Background(), logs)
-				if err != nil {
-					return queryResultMsg{err: err}
-				}
-				return queryResultMsg{result: out.Result}
-			})
-			return tea.Batch(cmds...)
+// 	if msg.IsPreset {
+// 		switch msg.Input {
+// 		case "/stats":
+// 			logs := m.LogViewer.Logs()
+// 			cmds = append(cmds, func() tea.Msg {
+// 				out, err := m.Orch.RunStats(context.Background(), logs)
+// 				if err != nil {
+// 					return queryResultMsg{err: err}
+// 				}
+// 				return queryResultMsg{result: out.Result}
+// 			})
+// 			return tea.Batch(cmds...)
 
-		case "/clear":
-			cmds = append(cmds, func() tea.Msg {
-				return clearAnswersMsg{}
-			})
-			return tea.Batch(cmds...)
+// 		case "/clear":
+// 			cmds = append(cmds, func() tea.Msg {
+// 				return clearAnswersMsg{}
+// 			})
+// 			return tea.Batch(cmds...)
 
-		case "/quit":
-			m.cancel()
-			return tea.Quit
+// 		case "/quit":
+// 			m.Cancel()
+// 			return tea.Quit
 
-		default:
-			cmds = append(cmds, func() tea.Msg {
-				return queryResultMsg{result: "unknown command. available: /stats /clear /quit"}
-			})
-			return tea.Batch(cmds...)
-		}
-	}
+// 		default:
+// 			cmds = append(cmds, func() tea.Msg {
+// 				return queryResultMsg{result: "unknown command. available: /stats /clear /quit"}
+// 			})
+// 			return tea.Batch(cmds...)
+// 		}
+// 	}
 
-	m.queryBar.Disable()
-	logs := m.logViewer.Logs()
-	cmds = append(cmds,
-		m.watchOrchestratorEvents(),
-		m.runOrchestrator(msg.Input, logs),
-	)
-	return tea.Batch(cmds...)
-}
+// 	m.QueryBar.Disable()
+// 	logs := m.LogViewer.Logs()
+// 	cmds = append(cmds,
+// 		m.watchOrchestratorEvents(),
+// 		m.runOrchestrator(msg.Input, logs),
+// 	)
+// 	return tea.Batch(cmds...)
+// }
 
-func (m ChatModel) runOrchestrator(query string, logs []types.LogEntry) tea.Cmd {
-	return func() tea.Msg {
-		if m.orch == nil {
-			return queryResultMsg{
-				err: fmt.Errorf("AI not configured — add GEMINI_API_KEY to ~/.argus/config.yaml"),
-			}
-		}
-		_, err := m.orch.Run(m.ctx, query, logs, m.target.Name)
-		if err != nil {
-			// only send error result — success is handled by EventChunk/EventAnswer
-			return queryResultMsg{err: err}
-		}
-		// success case: streaming already handled it via EventChunk → EventAnswer
-		// return nil so no duplicate rendering happens
-		return nil
-	}
-}
+// func (m ChatModel) runOrchestrator(query string, logs []types.LogEntry) tea.Cmd {
+// 	return func() tea.Msg {
+// 		if m.Orch == nil {
+// 			return queryResultMsg{
+// 				err: fmt.Errorf("AI not configured — add GEMINI_API_KEY to ~/.argus/config.yaml"),
+// 			}
+// 		}
+// 		_, err := m.Orch.Run(m.Ctx, query, logs, m.target.Name)
+// 		if err != nil {
+// 			// only send error result — success is handled by EventChunk/EventAnswer
+// 			return queryResultMsg{err: err}
+// 		}
+// 		// success case: streaming already handled it via EventChunk → EventAnswer
+// 		// return nil so no duplicate rendering happens
+// 		return nil
+// 	}
+// }
 
 // watchOrchestratorEvents reads ONE event from orch.Events channel
 // chat.go re-schedules this after each event so all events are shown
-func (m ChatModel) watchOrchestratorEvents() tea.Cmd {
-	return func() tea.Msg {
-		select {
-		case event := <-m.orch.Events:
-			return components.AgentEventMsg(event)
-		case <-m.ctx.Done():
-			return nil
-		}
-	}
-}
+// func (m ChatModel) watchOrchestratorEvents() tea.Cmd {
+// 	return func() tea.Msg {
+// 		select {
+// 		case event := <-m.Orch.Events:
+// 			return components.AgentEventMsg(event)
+// 		case <-m.Ctx.Done():
+// 			return nil
+// 		}
+// 	}
+// }
 
 // ── layout ────────────────────────────────────────────────────────────────
 
-func (m *ChatModel) relayout() {
-	m.dims = layout.Compute(m.width, m.height)
+// func (m *ChatModel) relayout() {
+// 	m.Dims = layout.Compute(m.Width, m.Height)
 
-	if m.dims.IsWide() {
-		// wide: log pane left, insights pane right
-		logW := m.dims.LogPaneWidth - 2
-		logH := m.dims.LogPaneHeight
-		insW := m.dims.InsightsPaneWidth - 2
-		insH := m.dims.InsightsPaneHeight
+// 	if m.Dims.IsWide() {
+// 		// wide: log pane left, insights pane right
+// 		logW := m.Dims.LogPaneWidth - 2
+// 		logH := m.Dims.LogPaneHeight
+// 		insW := m.Dims.InsightsPaneWidth - 2
+// 		insH := m.Dims.InsightsPaneHeight
 
-		if m.logViewer == nil {
-			lv := components.NewLogViewer(logW, logH)
-			m.logViewer = &lv
-		} else {
-			m.logViewer.Resize(logW, logH)
-		}
+// 		if m.LogViewer == nil {
+// 			lv := components.NewLogViewer(logW, logH)
+// 			m.LogViewer = &lv
+// 		} else {
+// 			m.LogViewer.Resize(logW, logH)
+// 		}
 
-		if !m.answerReady {
-			m.answerVP = viewport.New(insW, insH)
-			m.answerReady = true
-		} else {
-			m.answerVP.Width = insW
-			m.answerVP.Height = insH
-		}
+// 		if !m.AnswerReady {
+// 			m.AnswerVP = viewport.New(insW, insH)
+// 			m.AnswerReady = true
+// 		} else {
+// 			m.AnswerVP.Width = insW
+// 			m.AnswerVP.Height = insH
+// 		}
 
-	} else {
-		// narrow: single pane, tabs switch between log and insights
-		paneW := m.dims.PaneWidth - 2
-		paneH := m.dims.PaneHeight
+// 	} else {
+// 		// narrow: single pane, tabs switch between log and insights
+// 		paneW := m.Dims.PaneWidth - 2
+// 		paneH := m.Dims.PaneHeight
 
-		if m.logViewer == nil {
-			lv := components.NewLogViewer(paneW, paneH)
-			m.logViewer = &lv
-		} else {
-			m.logViewer.Resize(paneW, paneH)
-		}
+// 		if m.LogViewer == nil {
+// 			lv := components.NewLogViewer(paneW, paneH)
+// 			m.LogViewer = &lv
+// 		} else {
+// 			m.LogViewer.Resize(paneW, paneH)
+// 		}
 
-		if !m.answerReady {
-			m.answerVP = viewport.New(paneW, paneH)
-			m.answerReady = true
-		} else {
-			m.answerVP.Width = paneW
-			m.answerVP.Height = paneH
-		}
-	}
-}
+// 		if !m.AnswerReady {
+// 			m.AnswerVP = viewport.New(paneW, paneH)
+// 			m.AnswerReady = true
+// 		} else {
+// 			m.AnswerVP.Width = paneW
+// 			m.AnswerVP.Height = paneH
+// 		}
+// 	}
+// }
 
 // call this every time answerContent changes
 func (m *ChatModel) refreshAnswerVP() {
-	content := strings.Join(m.answerContent, "\n\n")
-	m.answerVP.SetContent(content)
-	m.answerVP.GotoBottom() // auto scroll to latest answer
+	content := strings.Join(m.AnswerContent, "\n\n")
+	m.AnswerVP.SetContent(content)
+	m.AnswerVP.GotoBottom() // auto scroll to latest answer
 }
 
 // ── view ──────────────────────────────────────────────────────────────────
 
 func (m ChatModel) View() string {
-	if m.width == 0 || m.logViewer == nil {
+	if m.Width == 0 || m.LogViewer == nil {
 		return "\n  " + styles.Muted.Render("initializing...")
 	}
 
@@ -472,130 +435,65 @@ func (m ChatModel) View() string {
 		styles.Muted.Render(m.target.Image),
 		styles.Muted.Render("tab: switch panel  esc: back  /stats /clear /quit"),
 	)
-
-	// ── thinking indicator ────────────────────────────────────────────
-	thinkingStr := m.thinking.View()
-
-	// ── query bar ─────────────────────────────────────────────────────
-	queryStr := "\n" + m.queryBar.View() + "\n"
-
-	// ── footer shortcuts ──────────────────────────────────────────────
-	focused := map[int]string{0: "logs", 1: "answers"}[m.focusedPanel]
-	shortcuts := []struct{ key, desc string }{
-		{"↑↓", "scroll"},
-		{"f", "follow"},
-		{"end", "jump end"},
-		{"tab", "switch panel"},
-		{"esc", "back"},
-		{"/stats", "counts"},
-		{"/clear", "clear"},
-		{"/quit", "quit"},
-	}
-	var keys, descs strings.Builder
-	for i, s := range shortcuts {
-		keys.WriteString(styles.Brand.Render(s.key))
-		descs.WriteString(styles.Muted.Render(s.desc))
-		if i < len(shortcuts)-1 {
-			keys.WriteString(styles.Muted.Render("  ·  "))
-			descs.WriteString(styles.Muted.Render("  ·  "))
-		}
-	}
-	footer := styles.HRuleStr(m.width) + "\n" +
-		"  " + keys.String() + "\n" +
-		"  " + descs.String() + "\n" +
-		"  " + styles.Muted.Render("panel: "+focused) + "\n"
-
-	// ── insights pane content ─────────────────────────────────────────
-	var insightsContent string
-	if len(m.answerContent) == 0 {
-		insightsContent = "  " + styles.Muted.Render("ask a question below...")
-	} else {
-		insightsContent = m.answerVP.View()
-	}
-	if thinkingStr != "" {
-		insightsContent += "\n" + thinkingStr
-	}
-
-	// ── assemble by layout mode ───────────────────────────────────────
-	var b strings.Builder
-	b.WriteString(header)
-
-	if m.dims.IsWide() {
-		// ── wide: log left, insights right ───────────────────────────
-		logBorder := styles.HRuleStr(m.dims.LogPaneWidth)
-		if m.focusedPanel == 0 {
-			logBorder = styles.Brand.Render(strings.Repeat("─", m.dims.LogPaneWidth))
-		}
-
-		insBorder := styles.HRuleStr(m.dims.InsightsPaneWidth)
-		if m.focusedPanel == 1 {
-			insBorder = styles.Brand.Render(strings.Repeat("─", m.dims.InsightsPaneWidth))
-		}
-
-		// build left column: rule + log pane
-		left := logBorder + "\n" + m.logViewer.View()
-
-		// build right column: rule + insights
-		right := insBorder + "\n" + insightsContent
-
-		// join horizontally — lipgloss aligns tops
-		divider := layout.Divider(m.dims.LogPaneHeight + 1) // +1 for rule row
-		panes := layout.JoinPanes(left, divider, right)
-
-		b.WriteString(panes)
-		b.WriteString("\n")
-
-	} else {
-		// ── narrow: tab bar + single active pane ─────────────────────
-		b.WriteString(layout.TabBar(m.dims.PaneWidth, m.focusedPanel))
-		b.WriteString("\n")
-
-		if m.focusedPanel == 0 {
-			b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
-			b.WriteString(m.logViewer.View())
-		} else {
-			b.WriteString(styles.Brand.Render(strings.Repeat("─", m.width)) + "\n")
-			b.WriteString(insightsContent)
-		}
-		b.WriteString("\n")
-	}
-
-	if thinkingStr != "" && m.dims.IsWide() {
-		// in wide mode thinking already rendered in right pane
-		// skip here to avoid duplication
-	}
-
-	b.WriteString(queryStr)
-	b.WriteString(footer)
-
-	return b.String()
+	return m.Core.RenderView(header)
 }
 
 // appendChunk adds a token to the currently-streaming answer
-func (m *ChatModel) appendChunk(chunk string) {
-	if m.streamingAnswer == "" {
-		// first chunk — add the "◆ Argus" header
-		m.answerContent = append(m.answerContent,
-			styles.AgentAnswer.Render("◆ Argus")+"\n")
-	}
-	m.streamingAnswer += chunk
+// func (m *ChatModel) appendChunk(chunk string) {
+// 	if m.StreamingAnswer == "" {
+// 		// first chunk — add the "◆ Argus" header
+// 		m.AnswerContent = append(m.AnswerContent,
+// 			styles.AgentAnswer.Render("◆ Argus")+"\n")
+// 	}
+// 	m.StreamingaAnswer += chunk
 
-	// update the last answer entry with accumulated chunks
-	last := len(m.answerContent) - 1
-	m.answerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" +
-		m.streamingAnswer // raw for now, render markdown on finalize
+// 	// update the last answer entry with accumulated chunks
+// 	last := len(m.AnswerContent) - 1
+// 	m.AnswerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" +
+// 		m.StreamingAnswer // raw for now, render markdown on finalize
 
-	m.refreshAnswerVP()
-}
+// 	m.refreshAnswerVP()
+// }
 
 // finalizeStreamingAnswer renders markdown on the completed response
 func (m *ChatModel) finalizeStreamingAnswer() {
-	if m.streamingAnswer == "" {
+	if m.StreamingAnswer == "" {
 		return
 	}
-	last := len(m.answerContent) - 1
-	rendered := styles.RenderMarkdown(m.streamingAnswer, m.width-4)
-	m.answerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
-	m.streamingAnswer = "" // reset for next answer
+	last := len(m.AnswerContent) - 1
+	rendered := styles.RenderMarkdown(m.StreamingAnswer, m.Width-4)
+	m.AnswerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
+	m.StreamingAnswer = "" // reset for next answer
 	m.refreshAnswerVP()
+}
+
+// presetHandler returns docker-specific preset overrides
+// Decision: callback pattern so Core.HandleQuery doesn't know about sources
+func (m ChatModel) presetHandler() func(string) (tea.Cmd, bool) {
+	return func(input string) (tea.Cmd, bool) {
+		switch input {
+		case "/quit":
+			m.Cancel()
+			return tea.Quit, true
+		}
+		return nil, false // not handled — Core handles the rest
+	}
+}
+
+// isScrollKey returns true for keys that should scroll the focused panel
+// all other keys go to the query bar only
+func isScrollKey(msg tea.Msg) bool {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return false // non-key messages (spinner ticks etc) go everywhere
+	}
+	switch keyMsg.String() {
+	case "up", "down",
+		"pgup", "pgdown",
+		"ctrl+u", "ctrl+d",
+		"ctrl+b",
+		"home", "end":
+		return true
+	}
+	return false
 }

@@ -3,6 +3,7 @@ package workspace
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/vishnuprasad2004/argus/internal/tui/layout"
 	"github.com/vishnuprasad2004/argus/internal/tui/styles"
 )
@@ -16,18 +17,28 @@ func (c *Core) RenderView(header string) string {
 	}
 
 	thinkingStr := c.Thinking.View()
-	queryStr    := "\n" + c.QueryBar.View() + "\n"
-	footer      := c.renderFooter()
+	queryStr := "\n" + c.QueryBar.View() + "\n"
+	footer := c.renderFooter()
 
-	// insights content
+	contentWidth := c.Width - 4
+	if c.Dims.IsWide() {
+		contentWidth = c.Dims.InsightsPaneWidth - 4
+	}
+
+	// insights content — constrained to contentWidth
 	var insightsContent string
 	if len(c.AnswerContent) == 0 {
 		insightsContent = "  " + styles.Muted.Render("ask a question below...")
 	} else {
-		insightsContent = c.AnswerVP.View()
+		// wrap the viewport itself to the correct width
+		insightsContent = lipgloss.NewStyle().
+			Width(contentWidth).
+			Render(c.AnswerVP.View())
 	}
 	if thinkingStr != "" {
-		insightsContent += "\n" + thinkingStr
+		insightsContent += "\n" + lipgloss.NewStyle().
+			Width(contentWidth).
+			Render(thinkingStr)
 	}
 
 	var b strings.Builder
@@ -43,10 +54,10 @@ func (c *Core) RenderView(header string) string {
 			insBorder = styles.Brand.Render(strings.Repeat("─", c.Dims.InsightsPaneWidth))
 		}
 
-		left    := logBorder + "\n" + c.LogViewer.View()
-		right   := insBorder + "\n" + insightsContent
+		left := logBorder + "\n" + c.LogViewer.View()
+		right := insBorder + "\n" + insightsContent
 		divider := layout.Divider(c.Dims.LogPaneHeight + 1)
-		panes   := layout.JoinPanes(left, divider, right)
+		panes := layout.JoinPanes(left, divider, right)
 
 		b.WriteString(panes)
 		b.WriteString("\n")
@@ -72,12 +83,12 @@ func (c *Core) renderFooter() string {
 	focused := map[int]string{0: "logs", 1: "answers"}[c.FocusedPanel]
 
 	shortcuts := []struct{ key, desc string }{
-		{"↑↓",    "scroll"},
-		{"f",     "follow"},
-		{"tab",   "switch panel"},
-		{"esc",   "back"},
-		{"/stats","counts"},
-		{"/clear","clear"},
+		{"↑↓", "scroll"},
+		{"ctrl+f", "follow"},
+		{"tab", "switch panel"},
+		{"esc", "back"},
+		{"/stats", "counts"},
+		{"/clear", "clear"},
 		{"/quit", "quit"},
 	}
 

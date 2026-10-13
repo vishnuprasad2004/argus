@@ -201,7 +201,7 @@ func (m FileChatModel) loadFile() tea.Cmd {
 
 func (m FileChatModel) handleQuery(msg components.QuerySubmitMsg) tea.Cmd {
 	userLine := styles.Brand.Render("❯ you") + "\n" +
-		styles.WrapText(msg.Input, m.width-4)
+		styles.WrapText(msg.Input, m.width-10)
 	m.answerContent = append(m.answerContent, userLine)
 	m.refreshAnswerVP()
 

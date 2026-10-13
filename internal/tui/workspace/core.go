@@ -84,6 +84,8 @@ func (c *Core) Relayout() {
 		}
 
 		if !c.AnswerReady {
+			c.AnswerVP.Width  = insW
+    	c.AnswerVP.Height = insH
 			c.AnswerVP = viewport.New(insW, insH)
 			c.AnswerReady = true
 		} else {

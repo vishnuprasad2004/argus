@@ -71,3 +71,7 @@ func (q *QueryBar) View() string {
 // Disable prevents input while agent is thinking
 func (q *QueryBar) Disable() { q.disabled = true;  q.input.Blur() }
 func (q *QueryBar) Enable()  { q.disabled = false; q.input.Focus() }
+
+func (q *QueryBar) IsFocused() bool {
+    return q.input.Focused()
+}

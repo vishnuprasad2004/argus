@@ -92,13 +92,13 @@ func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEn
 	system_prompt := o.buildSystemPrompt(query, sourceNames)
 
 	// single LLM call — orch decides everything
-	response, err := o.client.Chat(ctx, system_prompt, o.history[:len(o.history)-1], userMsg)
+	routingResponse, err := o.client.Chat(ctx, system_prompt, o.history[:len(o.history)-1], userMsg)
 	if err != nil {
 			return o.fallbackToStats(ctx, logs, err)
 	}
 	// check if orch wants to call a tool
-	if strings.HasPrefix(strings.TrimSpace(response), "TOOL:") {
-		return o.handleToolCall(ctx, response, query, logs, historyStr.String())
+	if strings.HasPrefix(strings.TrimSpace(routingResponse), "TOOL:") {
+		return o.handleToolCall(ctx, routingResponse, query, logs, historyStr.String())
 	}
 
 	var fullResponse strings.Builder

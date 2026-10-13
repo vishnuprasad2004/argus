@@ -55,37 +55,27 @@ type AgentEventMsg agents.AgentEvent
 
 func (t *ThinkingIndicator) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-
 	case AgentEventMsg:
-		switch agents.EventType(msg.Type) {
+		switch agents.EventType(msg.Type) { // cast to EventType here
 		case agents.EventToolCall:
-			line := styles.AgentTool.Render(fmt.Sprintf("⚙  %s: %s", msg.Tool, msg.Message))
-			t.events = append(t.events, line)
-			t.visible = true
-			t.currentVerb = randomVerb() // new verb per tool call
-			line = fmt.Sprintf("%s  %s",
-					styles.Brand.Render(t.currentVerb),
-					styles.Muted.Render(msg.Tool),
+			t.visible     = true
+			t.currentVerb = randomVerb()
+			line := fmt.Sprintf("%s  %s",
+				styles.Brand.Render(t.currentVerb),
+				styles.Muted.Render(msg.Tool),
 			)
 			t.events = append(t.events, line)
-
 		case agents.EventAnswer:
-			t.visible = false // hide spinner when answer arrives
-			t.events = nil    // clear events
-
+			t.visible = false
+			t.events  = nil
 		case agents.EventWarning:
-			line := styles.LogWarn.Render(fmt.Sprintf("⚠  %s", msg.Message))
-			t.events = append(t.events, line)
-
+			t.events = append(t.events, styles.LogWarn.Render("⚠  "+msg.Message))
 		case agents.EventError:
-			line := styles.LogError.Render(fmt.Sprintf("✗  %s", msg.Message))
-			t.events = append(t.events, line)
+			t.events = append(t.events, styles.LogError.Render("✗  "+msg.Message))
 			t.visible = false
 		}
 		return nil
 	}
-
-	// always tick spinner so animation is smooth
 	var cmd tea.Cmd
 	t.spinner, cmd = t.spinner.Update(msg)
 	return cmd
