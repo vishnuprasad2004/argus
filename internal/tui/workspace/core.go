@@ -83,14 +83,11 @@ func (c *Core) Relayout() {
 			c.LogViewer.Resize(logW, logH)
 		}
 
+		c.AnswerVP.Width  = insW
+		c.AnswerVP.Height = insH
+		c.AnswerVP = viewport.New(insW, insH)
 		if !c.AnswerReady {
-			c.AnswerVP.Width  = insW
-    	c.AnswerVP.Height = insH
-			c.AnswerVP = viewport.New(insW, insH)
 			c.AnswerReady = true
-		} else {
-			c.AnswerVP.Width = insW
-			c.AnswerVP.Height = insH
 		}
 	} else {
 		paneW := c.Dims.PaneWidth - 2

@@ -127,10 +127,9 @@ func (c *Core) WatchOrchestratorEvents() tea.Cmd {
 // ── answer management ─────────────────────────────────────────────────────
 
 func (c *Core) RefreshAnswerVP() {
-	// wrap each answer to the correct width before joining
 	wrapWidth := c.Width - 4
 	if c.Dims.IsWide() {
-		wrapWidth = c.Dims.InsightsPaneWidth - 4
+		wrapWidth = c.Dims.InsightsPaneWidth - 6 // extra padding
 	}
 	if wrapWidth <= 0 {
 		wrapWidth = 60
@@ -138,9 +137,9 @@ func (c *Core) RefreshAnswerVP() {
 
 	var wrapped []string
 	for _, answer := range c.AnswerContent {
-		// lipgloss Width forces hard wrap at column boundary
 		wrapped = append(wrapped, lipgloss.NewStyle().
 			Width(wrapWidth).
+			MaxWidth(wrapWidth). // ← add MaxWidth too
 			Render(answer))
 	}
 

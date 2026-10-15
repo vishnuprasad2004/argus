@@ -460,8 +460,12 @@ func (m *ChatModel) finalizeStreamingAnswer() {
 	if m.StreamingAnswer == "" {
 		return
 	}
+	wrapWidth := m.Width - 4
+	if m.Dims.IsWide() {
+		wrapWidth = m.Dims.InsightsPaneWidth - 6
+	}
 	last := len(m.AnswerContent) - 1
-	rendered := styles.RenderMarkdown(m.StreamingAnswer, m.Width-4)
+	rendered := styles.RenderMarkdown(m.StreamingAnswer, wrapWidth)
 	m.AnswerContent[last] = styles.AgentAnswer.Render("◆ Argus") + "\n" + rendered
 	m.StreamingAnswer = "" // reset for next answer
 	m.refreshAnswerVP()

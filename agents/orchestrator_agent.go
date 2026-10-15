@@ -48,14 +48,14 @@ func NewOrchestrator(client *GeminiClient) *Orchestrator {
 		return &Orchestrator{
 			Events: make(chan AgentEvent, 10),
 			// client stays nil — Chat() will return error not panic
-    }
+		}
 	}
 	store, _ := memory.NewStore()
 
 	return &Orchestrator{
 		client:     client,
-		logAgent:   &LogAnalysisAgent{ client: client },
-		rcaAgent:   &RCAAgent{ client: client },
+		logAgent:   &LogAnalysisAgent{client: client},
+		rcaAgent:   &RCAAgent{client: client},
 		statsAgent: &StatsAgent{}, // no LLM needed
 		Events:     make(chan AgentEvent, 10),
 		memory:     store,
@@ -64,13 +64,15 @@ func NewOrchestrator(client *GeminiClient) *Orchestrator {
 
 func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEntry, sourceNames ...string) (string, error) {
 
-	// add user message to history
+	// check for remember command first
+	if isRemember, section, fact := parseRememberCommand(query); isRemember {
+		return o.handleRemember(section, fact)
+	}
 	o.history = append(o.history, ConversationTurn{
 		Role:    "user",
 		Content: query,
 	})
 
-	// build history string
 	var historyStr strings.Builder
 	for _, turn := range o.history {
 		fmt.Fprintf(&historyStr, "%s: %s\n", turn.Role, turn.Content)
@@ -78,43 +80,71 @@ func (o *Orchestrator) Run(ctx context.Context, query string, logs []types.LogEn
 
 	logs = pipeline.Scrub(logs)
 
-	// build log summary — only send if logs exist
-	// don't resend full logs every turn, too many tokens
 	logContext := ""
 	if len(logs) > 0 {
 		logContext = fmt.Sprintf("\n\nAvailable log data: %d entries, last entry at %s",
 			len(logs), logs[len(logs)-1].Timestamp.Format("15:04:05"))
 	}
 
-	// THE key prompt — orch is the agent, tools are just capabilities
+	systemPrompt := o.buildSystemPrompt(query, sourceNames)
 	userMsg := fmt.Sprintf("%s\n\n%s", query, logContext)
 
-	system_prompt := o.buildSystemPrompt(query, sourceNames)
+	// ── single streaming call ─────────────────────────────────────────
+	// stream everything — check if first line is a tool call
+	var full strings.Builder
+	var firstLine string
+	firstLineDone := false
 
-	// single LLM call — orch decides everything
-	routingResponse, err := o.client.Chat(ctx, system_prompt, o.history[:len(o.history)-1], userMsg)
+	_, err := o.client.ChatStream(ctx, systemPrompt,
+		o.history[:len(o.history)-1], userMsg,
+		func(chunk string) {
+			full.WriteString(chunk)
+
+			// capture first line to check for TOOL: prefix
+			if !firstLineDone {
+				firstLine += chunk
+				if strings.Contains(firstLine, "\n") {
+					firstLineDone = true
+				}
+			}
+
+			// only fire chunks if NOT a tool call
+			// we check after full response below
+		},
+	)
 	if err != nil {
-			return o.fallbackToStats(ctx, logs, err)
-	}
-	// check if orch wants to call a tool
-	if strings.HasPrefix(strings.TrimSpace(routingResponse), "TOOL:") {
-		return o.handleToolCall(ctx, routingResponse, query, logs, historyStr.String())
+		return o.fallbackToStats(ctx, logs, err)
 	}
 
-	var fullResponse strings.Builder
-	streamErr := o.streamFinalAnswer(ctx, system_prompt, query, logContext, &fullResponse)
-	if streamErr != nil {
-			return o.fallbackToStats(ctx, logs, streamErr)
+	response := strings.TrimSpace(full.String())
+
+	// ── tool call or direct answer ────────────────────────────────────
+	if strings.HasPrefix(response, "TOOL:") {
+		// was a tool call — handle it (will stream the synthesis)
+		return o.handleToolCall(ctx, response, query, logs, historyStr.String())
 	}
 
-	// no tool needed — orch answered directly
-	final := fullResponse.String()
-	o.history = append(o.history, ConversationTurn{Role: "assistant", Content: final})
-	o.Events <- AgentEvent{Type: EventAnswer, Tool: "orchestrator", Message: final}
-	return final, nil
+	// ── direct answer — fire chunks to TUI now ────────────────────────
+	// split into small chunks so TUI renders progressively
+	const chunkSize = 50 // characters per chunk
+
+	for i := 0; i < len(response); i += chunkSize {
+		end := i + chunkSize
+		if end > len(response) {
+			end = len(response)
+		}
+		chunk := response[i:end]
+		o.Events <- AgentEvent{
+			Type:    EventChunk,
+			Tool:    "orchestrator",
+			Message: chunk,
+		}
+	}
+
+	o.history = append(o.history, ConversationTurn{Role: "assistant", Content: response})
+	o.Events <- AgentEvent{Type: EventAnswer, Tool: "orchestrator", Message: response}
+	return response, nil
 }
-
-
 
 func (o *Orchestrator) buildSystemPrompt(query string, sourceNames []string) string {
 	base := `You are Argus, an expert SRE AI assistant in a terminal tool.
@@ -145,9 +175,6 @@ Otherwise reply normally.`
 
 	return base
 }
-
-
-
 
 func (o *Orchestrator) handleToolCall(ctx context.Context, toolResponse, originalQuery string, logs []types.LogEntry, historyStr string) (string, error) {
 
@@ -209,25 +236,25 @@ func (o *Orchestrator) handleToolCall(ctx context.Context, toolResponse, origina
 		`, historyStr, toolName, toolResult, originalQuery)
 
 	var full strings.Builder
-    _, err = o.client.ChatStream(ctx, SYSTEM_PROMPT,
-        o.history[:len(o.history)-1], finalPrompt,
-        func(chunk string) {
-            full.WriteString(chunk)
-            o.Events <- AgentEvent{
-                Type:    EventChunk,
-                Tool:   "orchestrator",
-                Message: chunk,
-            }
-        },
-    )
-    if err != nil {
-        return "", err
-    }
+	_, err = o.client.ChatStream(ctx, SYSTEM_PROMPT,
+		o.history[:len(o.history)-1], finalPrompt,
+		func(chunk string) {
+			full.WriteString(chunk)
+			o.Events <- AgentEvent{
+				Type:    EventChunk,
+				Tool:    "orchestrator",
+				Message: chunk,
+			}
+		},
+	)
+	if err != nil {
+		return "", err
+	}
 
-    final := full.String()
-    o.history = append(o.history, ConversationTurn{Role: "assistant", Content: final})
-    o.Events <- AgentEvent{Type: EventAnswer, Tool: "orchestrator", Message: final}
-    return final, nil
+	final := full.String()
+	o.history = append(o.history, ConversationTurn{Role: "assistant", Content: final})
+	o.Events <- AgentEvent{Type: EventAnswer, Tool: "orchestrator", Message: final}
+	return final, nil
 }
 
 // RunStats runs just the stats agent — no LLM, instant response
@@ -238,38 +265,37 @@ func (o *Orchestrator) RunStats(ctx context.Context, logs []types.LogEntry) (Age
 
 // streamFinalAnswer streams the response chunk by chunk via Events channel
 func (o *Orchestrator) streamFinalAnswer(
-    ctx context.Context,
-    system, query, logContext string,
-    full *strings.Builder,
+	ctx context.Context,
+	system, query, logContext string,
+	full *strings.Builder,
 ) error {
-    userMsg := fmt.Sprintf("%s\n\n%s", query, logContext)
+	userMsg := fmt.Sprintf("%s\n\n%s", query, logContext)
 
-    _, err := o.client.ChatStream(ctx, system, o.history[:len(o.history)-1], userMsg,
-        func(chunk string) {
-            full.WriteString(chunk)
-            // fire each chunk as an event — TUI listens and appends
-            o.Events <- AgentEvent{
-                Type:    EventChunk,
-                Tool:   "orchestrator",
-                Message: chunk,
-            }
-        },
-    )
-    return err
+	_, err := o.client.ChatStream(ctx, system, o.history[:len(o.history)-1], userMsg,
+		func(chunk string) {
+			full.WriteString(chunk)
+			// fire each chunk as an event — TUI listens and appends
+			o.Events <- AgentEvent{
+				Type:    EventChunk,
+				Tool:    "orchestrator",
+				Message: chunk,
+			}
+		},
+	)
+	return err
 }
 
 func (o *Orchestrator) fallbackToStats(ctx context.Context, logs []types.LogEntry, originalErr error) (string, error) {
-    o.Events <- AgentEvent{
-        Type:    EventWarning,
-        Message: "AI unavailable — showing stats only",
-    }
-    out, err := o.statsAgent.Run(ctx, AgentInput{Logs: logs})
-    if err != nil {
-        return "", originalErr // both failed, return original error
-    }
-    return out.Result + "\n\n⚠ AI analysis unavailable", nil
+	o.Events <- AgentEvent{
+		Type:    EventWarning,
+		Message: "AI unavailable — showing stats only",
+	}
+	out, err := o.statsAgent.Run(ctx, AgentInput{Logs: logs})
+	if err != nil {
+		return "", originalErr // both failed, return original error
+	}
+	return out.Result + "\n\n⚠ AI analysis unavailable", nil
 }
-
 
 // parseRememberCommand detects "remember that..." queries
 // returns section and fact to store
@@ -327,7 +353,7 @@ func (o *Orchestrator) handleRemember(section, fact string) (string, error) {
 
 	o.Events <- AgentEvent{
 		Type:    EventAnswer,
-		Tool:   "memory",
+		Tool:    "memory",
 		Message: fmt.Sprintf("Got it — saved to %s in agent.md", section),
 	}
 

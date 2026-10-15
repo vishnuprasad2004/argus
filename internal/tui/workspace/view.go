@@ -24,16 +24,15 @@ func (c *Core) RenderView(header string) string {
 	if c.Dims.IsWide() {
 		contentWidth = c.Dims.InsightsPaneWidth - 4
 	}
+	insightsPadding := lipgloss.NewStyle().PaddingLeft(1)
 
 	// insights content — constrained to contentWidth
 	var insightsContent string
 	if len(c.AnswerContent) == 0 {
-		insightsContent = "  " + styles.Muted.Render("ask a question below...")
+		insightsContent = insightsPadding.Render(styles.Muted.Render("Ask a question below..."))
 	} else {
 		// wrap the viewport itself to the correct width
-		insightsContent = lipgloss.NewStyle().
-			Width(contentWidth).
-			Render(c.AnswerVP.View())
+		insightsContent = insightsPadding.Render(c.AnswerVP.View())
 	}
 	if thinkingStr != "" {
 		insightsContent += "\n" + lipgloss.NewStyle().
