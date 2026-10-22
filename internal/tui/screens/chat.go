@@ -5,6 +5,7 @@ import (
 	"fmt"
 	// "github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	dockerclient "github.com/docker/docker/client"
 	"github.com/vishnuprasad2004/argus/agents"
 	"github.com/vishnuprasad2004/argus/internal/collectors/docker"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
@@ -36,17 +37,24 @@ type logsLoadedMsg struct {
 type ChatModel struct {
 	workspace.Core // all the shared workspace state and logic
 
-	target  docker.ContainerTarget // the container we're attached to
-	logFeed chan types.LogEntry    // channel for live log lines from Docker
+	target    docker.ContainerTarget // the container we're attached to
+	logFeed   chan types.LogEntry    // channel for live log lines from Docker
+	dockerCli *dockerclient.Client   // used for metrics
 }
 
 func NewChatModel(target docker.ContainerTarget, llm *agents.GeminiClient) ChatModel {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	cli, _ := dockerclient.NewClientWithOpts(
+		dockerclient.FromEnv,
+		dockerclient.WithAPIVersionNegotiation(),
+	)
+
 	return ChatModel{
-		target:  target,
-		Core:    workspace.NewCore(ctx, cancel, llm),
-		logFeed: make(chan types.LogEntry, 500),
+		target:    target,
+		Core:      workspace.NewCore(ctx, cancel, llm),
+		logFeed:   make(chan types.LogEntry, 500),
+		dockerCli: cli,
 		// logViewer intentionally nil here — initialized in relayout()
 		// because we don't know terminal dimensions yet
 	}
@@ -57,7 +65,11 @@ func NewChatModel(target docker.ContainerTarget, llm *agents.GeminiClient) ChatM
 func (m ChatModel) Init() tea.Cmd {
 	// only start spinner here — wait for WindowSizeMsg before fetching logs
 	// WindowSizeMsg always fires first in bubbletea, so this is safe
-	return m.Core.Init() //delegate the work to Core
+	cmds := []tea.Cmd{m.Core.Init()}
+	if m.target.IsLive {
+		cmds = append(cmds, workspace.StartMetricsTicker())
+	}
+	return tea.Batch(cmds...)
 }
 
 // ── update ────────────────────────────────────────────────────────────────
@@ -136,6 +148,13 @@ func (m ChatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.AnswerContent = nil
 		m.AnswerVP.SetContent("")
 		return m, nil
+	case workspace.MetricsTickMsg:
+		return m, m.fetchMetrics()
+
+	case workspace.MetricsUpdatedMsg:
+		m.MetricsPanel.Update(msg.Metrics)
+		m.ShowMetrics = true
+		return m, workspace.StartMetricsTicker() // reschedule
 
 	// agent event — forward to thinking indicator
 	case components.AgentEventMsg:
@@ -500,4 +519,11 @@ func isScrollKey(msg tea.Msg) bool {
 		return true
 	}
 	return false
+}
+
+func (m ChatModel) fetchMetrics() tea.Cmd {
+	return func() tea.Msg {
+		metrics := docker.FetchMetrics(m.Ctx, m.dockerCli, m.target.ID)
+		return workspace.MetricsUpdatedMsg{Metrics: metrics}
+	}
 }

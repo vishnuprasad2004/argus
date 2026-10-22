@@ -28,11 +28,16 @@ func (c *Core) RenderView(header string) string {
 
 	// insights content — constrained to contentWidth
 	var insightsContent string
+
+	metricsStr := ""
+	if c.ShowMetrics {
+			metricsStr = c.MetricsPanel.View() + "\n"
+	}
+
 	if len(c.AnswerContent) == 0 {
-		insightsContent = insightsPadding.Render(styles.Muted.Render("Ask a question below..."))
+			insightsContent = metricsStr + "  " + insightsPadding.Render(styles.Muted.Render("Ask a question below..."))
 	} else {
-		// wrap the viewport itself to the correct width
-		insightsContent = insightsPadding.Render(c.AnswerVP.View())
+			insightsContent = metricsStr + insightsPadding.Render(c.AnswerVP.View())
 	}
 	if thinkingStr != "" {
 		insightsContent += "\n" + lipgloss.NewStyle().

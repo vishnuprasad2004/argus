@@ -2,10 +2,12 @@ package workspace
 
 import (
 	"context"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/vishnuprasad2004/argus/agents"
+	"github.com/vishnuprasad2004/argus/internal/collectors/docker"
 	"github.com/vishnuprasad2004/argus/internal/tui/components"
 	"github.com/vishnuprasad2004/argus/internal/tui/layout"
 )
@@ -42,6 +44,26 @@ type Core struct {
 
 	// streaming state
 	StreamingAnswer string
+
+	// metrics panel related
+	MetricsPanel    components.MetricsPanel
+  ShowMetrics     bool  // only show for live containers
+}
+
+
+// MetricsTickMsg fires every 2 seconds to refresh metrics
+type MetricsTickMsg struct{}
+
+// MetricsUpdatedMsg carries fresh metrics back to Update()
+type MetricsUpdatedMsg struct {
+    Metrics docker.ContainerMetrics
+}
+
+// StartMetricsTicker returns a cmd that fires MetricsTickMsg every 2 seconds
+func StartMetricsTicker() tea.Cmd {
+    return tea.Every(2*time.Second, func(t time.Time) tea.Msg {
+        return MetricsTickMsg{}
+    })
 }
 
 // NewCore constructs the shared core — call from each screen's constructor.
@@ -53,6 +75,7 @@ func NewCore(ctx context.Context, cancel context.CancelFunc, llm *agents.GeminiC
 		Orch:     agents.NewOrchestrator(llm),
 		Ctx:      ctx,
 		Cancel:   cancel,
+		MetricsPanel: components.NewMetricsPanel(40),
 	}
 }
 
