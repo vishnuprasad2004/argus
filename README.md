@@ -9,38 +9,39 @@
 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚══════╝
 ```
 
-> AI-powered log analysis for SREs and developers — in your terminal.
+> A lightweight, terminal-native observability workspace with an AI copilot.
+> Logs and live metrics first. Ask questions in plain English when you need to.
 
-<!-- TODO: replace with actual demo GIF recorded with vhs -->
+<!-- TODO: replace with demo GIF recorded with vhs -->
 <!-- ![Argus demo](demo.gif) -->
 
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Gemini](https://img.shields.io/badge/Powered%20by-Gemini-4285F4?style=flat&logo=google)](https://aistudio.google.com)
+[![Gemini](https://img.shields.io/badge/Powered%20by-Gemini-4285F4?style=flat&logo=google&logoColor=white)](https://aistudio.google.com)
 
 ---
 
 ## What is Argus?
 
-Argus is a terminal UI application built in Go that brings AI-powered log analysis directly into your terminal. Instead of tab-switching between Docker Desktop, Grafana, kubectl, and a log viewer, Argus gives you one keyboard-driven interface to tail logs, detect anomalies, and ask natural language questions about what is happening in your services — without leaving the terminal.
+Argus is a TUI (terminal user interface) application written in Go. It connects to a Docker container, a running process, or a log file, streams the logs into a split-pane workspace, shows live container metrics, and lets you ask an AI assistant questions about what is happening.
 
-Named after the hundred-eyed giant of Greek mythology who never sleeps, Argus watches your services so you don't have to.
+Logs and operational state are the main workspace. The AI is a contextual copilot on the side, not the centerpiece. It ships as a single binary with no runtime to install.
+
+Named after the hundred-eyed giant of Greek mythology who never sleeps.
 
 ---
 
 ## The Problem
 
-Every developer running containers or services locally hits the same wall when something breaks:
+When something breaks locally, the workflow is usually:
 
 - Open Docker Desktop to find the container
-- Open a separate terminal to tail logs
-- Grep for errors manually
+- Open another terminal to tail logs
+- Grep for errors by hand
 - Google the stack trace
-- Context-switch between five tabs trying to piece together what happened
+- Switch between five tabs to piece together what happened
 
-On a laptop already running Docker, Minikube, and an editor, this workflow is slow, fragmented, and expensive on RAM. There is no single lightweight tool that does log tailing, anomaly detection, and AI-assisted root cause analysis in one place, from the terminal.
-
-Argus solves this.
+On a laptop already running Docker and an editor, that is slow and heavy. Argus puts log tailing, basic metrics, and AI-assisted analysis in one keyboard-driven terminal window.
 
 ---
 
@@ -50,33 +51,65 @@ Argus solves this.
 
 | Source | What it does |
 |---|---|
-| **Docker** | Connect to any running or stopped container. Fetches last N lines of history and streams live output simultaneously |
-| **Process** | Run any command (`npm run dev`, `python main.py`, `go run .`) through Argus. Captures stdout and stderr separately with auto level detection. Shows stats automatically on crash |
-| **Log file** | Analyze any `.log`, `.txt`, or newline-delimited JSON file. Choose tail mode or full file |
-| **Kubernetes** | Coming in v0.2.0 — namespace → pod selector, live streaming |
+| **Docker** | Pick any running or stopped container. Loads recent history, then streams live output. |
+| **Process** | Run any command (`npm run dev`, `python main.py`, `go run .`) through Argus. Captures stdout and stderr, detects log levels, and shows stats when the process exits. |
+| **Log file** | Analyze a `.log`, `.txt`, or newline-delimited JSON file. Choose the last N lines or the whole file. |
+| **Kubernetes** | Planned. |
 
-### AI capabilities
+### Workspace
 
-- **Natural language querying** — ask anything about your logs in plain English
-- **Root cause analysis** — get direct answers with evidence from the logs
-- **Conversational memory** — Argus remembers the full conversation, so follow-up questions work naturally
-- **Smart routing** — casual replies are handled conversationally, log questions trigger analysis agents, stats queries run free with zero LLM cost
-- **Token-by-token streaming** — responses stream as Gemini generates them, same feel as Claude Code or ChatGPT
-- **Markdown rendering** — bold, italics, code blocks, and lists rendered natively in the terminal
+- **Responsive split layout.** On wide terminals (120+ columns) logs take the left ~65% and the Insights pane takes the right ~35%. On narrow terminals it switches to a single pane with a tab bar.
+- **Follow mode.** Live logs auto-scroll. Scroll up to read and Argus stops following. A `↓ N new logs` indicator shows what you missed. `ctrl+f` or `end` resumes following.
+- **Independent scrolling.** The log pane and the Insights pane scroll separately. `tab` switches between them.
+- **Color-coded log levels** with live and historical logs in one view.
+- **Persistent query bar.** It is always ready for typing, whichever pane has scroll focus.
 
-### Terminal UX
+### Live metrics (Docker)
 
-- **Dual scrollable panels** — log viewer and answer panel independently scrollable, switch with `tab`
-- **Live + historical logs** — history on connect, live stream running in background
-- **Color-coded log levels** — ERROR in red, WARN in yellow, DEBUG in grey
-- **Fun thinking indicators** — Noodling, Cogitating, Discombobulating while agents work
-- **Preset commands** — `/stats`, `/clear`, `/quit` run instantly, no LLM call
+For running containers, the Insights pane shows CPU %, memory (used / limit), network in and out, block I/O, and PIDs. These come straight from the Docker stats API and refresh every 2 seconds. No Prometheus or exporter is needed.
+
+### AI assistant
+
+- **Natural-language questions** about the logs you are looking at
+- **Root cause analysis** with evidence from the logs
+- **Conversation memory** within a session, so follow-ups work
+- **Tool routing.** The orchestrator decides whether to answer from context or call a specialist agent (`log_analysis`, `rca`, `stats`)
+- **Token streaming.** Answers appear as they are generated
+- **Markdown rendering** in the terminal: code blocks, lists, emphasis
+- **Free local stats.** `/stats` runs in pure Go with no LLM call
+- **Experimental: agent memory.** Argus reads `~/.argus/agent.md` (your stack, services, preferences) and matching files in `~/.argus/runbooks/` and includes them as context
 
 ### Security
 
-- **Secret scrubbing** — API keys, passwords, tokens, JWT, AWS keys, emails, IPs, credit card numbers stripped before any LLM call
-- **Local-only stats** — `/stats` never sends data to Gemini
-- **Config with safe permissions** — `~/.argus/config.yaml` stored with `600` permissions
+- **Secret scrubbing before the LLM.** API keys, passwords, tokens, JWTs, AWS keys, emails, IP addresses, and card-like numbers are redacted from logs before anything is sent to Gemini.
+- **Local-only commands.** `/stats` never leaves your machine.
+- **Config permissions.** `~/.argus/config.yaml` is written with owner-only (`600`) permissions.
+
+> Scrubbing is regex-based and best-effort, not a guarantee. The log pane in your terminal shows raw, unscrubbed logs; only the data sent to the model is scrubbed. Review your own data-handling requirements before pointing Argus at sensitive production logs.
+
+---
+
+## Layout
+
+```
+Wide terminal (120+ columns)
+┌──────────────────────────────────────────────────────────────────────┐
+│ argus  ● payments-api  node:18                                       │
+├──────────────────────────────────────┬───────────────────────────────┤
+│ LOGS                                 │ INSIGHTS                      │
+│ 14:32:01 ERROR payments dial tcp ... │ CPU ████████░░  23%           │
+│ 14:32:02 WARN  payments retry 3/5    │ MEM ██████████  487/512MB     │
+│ 14:32:03 INFO  payments GET /health  │ NET ↑ 1.2MB  ↓ 0.3MB          │
+│ ↓ following                          │ ───────────────────────────── │
+│                                      │ ◆ Argus  (answers stream here)│
+├──────────────────────────────────────┴───────────────────────────────┤
+│ ❯ why did the error rate spike?                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│ ↑↓ scroll · ctrl+f follow · tab switch panel · esc back · /stats     │
+└──────────────────────────────────────────────────────────────────────┘
+
+Narrow terminal: tab bar (Logs · Insights) with one pane visible at a time.
+```
 
 ---
 
@@ -84,60 +117,57 @@ Argus solves this.
 
 ### Prerequisites
 
-- Go 1.22+ (not required for binary installation)
-- Docker Desktop (for container log analysis)
-- A Gemini API key — free at [aistudio.google.com](https://aistudio.google.com)
+- A Gemini API key (free at [aistudio.google.com](https://aistudio.google.com))
+- Docker Desktop, only if you want Docker container analysis
+- Go (version in `go.mod`), only if building from source
+- On Windows, use [Windows Terminal](https://aka.ms/terminal) for the best rendering
 
-### Install from source
+### Install a prebuilt binary
+
+Download from [Releases](https://github.com/vishnuprasad2004/argus/releases), or use the commands below.
+
+**Linux**
+
+```bash
+curl -L -o argus https://github.com/vishnuprasad2004/argus/releases/latest/download/argus-linux-amd64
+chmod +x argus
+./argus
+```
+
+**Windows (PowerShell)**
+
+```powershell
+curl.exe -L -o argus.exe https://github.com/vishnuprasad2004/argus/releases/latest/download/argus-windows-amd64.exe
+.\argus.exe
+```
+
+If Windows blocks the file, run `Unblock-File .\argus.exe` first.
+
+**macOS:** prebuilt binaries are not published yet. Build from source below.
+
+### Build from source
 
 ```bash
 git clone https://github.com/vishnuprasad2004/argus
 cd argus
+go mod tidy
 go build -o bin/argus ./cmd/
 ./bin/argus
 ```
 
-### Binary Installation (recommended)
-
-Download the binary for your platform from [Releases](https://github.com/vishnuprasad2004/argus/releases):
-
-<!-- # macOS (Apple Silicon)
-chmod +x argus-darwin-arm64 && ./argus-darwin-arm64
-
-# macOS (Intel)
-chmod +x argus-darwin-amd64 && ./argus-darwin-amd64
- -->
-```bash
-# Linux
-chmod +x argus-linux-amd64 && ./argus-linux-amd64
-# Windows
-argus-windows-amd64.exe
-```
-
-### Or install the binaries using the following commands: (curl is required)
-
-```bash
-# Linux
-curl -L -o argus https://github.com/vishnuprasad2004/argus/releases/download/v0.1.0/argus-linux-amd64
-# Windows
-curl -L -o argus curl -L -o argus.exe https://github.com/vishnuprasad2004/argus/releases/download/v0.1.0/argus-windows-amd64.exe
-```
-
-
 ### First run
 
-On first launch, Argus runs a setup wizard that walks you through:
+On first launch, a setup wizard asks for:
 
-1. Entering your Gemini API key
-2. Choosing a model (Flash Lite / Flash / Pro)
+1. Your Gemini API key
+2. A model (Flash Lite, Flash, or Pro)
 
-Your config is saved to `~/.argus/config.yaml` with owner-only permissions.
+It saves your choices to `~/.argus/config.yaml`.
 
-You can also skip the wizard by setting an environment variable:
+You can skip the wizard by setting the key in your environment:
 
 ```bash
 export GEMINI_API_KEY=your_key_here
-./bin/argus
 ```
 
 Or edit the config directly:
@@ -145,153 +175,116 @@ Or edit the config directly:
 ```yaml
 # ~/.argus/config.yaml
 gemini_api_key: "AIza..."
-model: "gemini-2.5-flash-lite"   # fastest, free tier — recommended
+model: "gemini-2.5-flash-lite"   # fastest, free tier (recommended)
 log_tail_lines: "200"
 ```
+
+Environment variables win over the config file.
 
 ---
 
 ## Usage
 
-### Docker container analysis
+### Docker containers
 
-```
-1. Launch argus
-2. Select Docker Container
-3. Pick any running or stopped container
-4. Argus fetches history and starts live streaming
-5. Ask anything: "why is nginx returning 502?"
-6. Tab switches between log panel and answer panel
-```
+1. Launch `argus` and choose **Docker Container**
+2. Pick a container (running or stopped)
+3. Argus loads recent history and, for running containers, starts streaming live logs and metrics
+4. Ask a question, for example `why is nginx returning 502?`
 
-### Process log capture
+### Processes
 
-```
-1. cd into your project directory
-2. Launch argus
-3. Select Process
-4. Enter your start command: npm run dev
-5. Argus runs it and captures all output
-6. Query anytime — or after it crashes (stats shown automatically)
-```
+1. `cd` into your project directory
+2. Launch `argus` and choose **Process**
+3. Enter the command to run, for example `npm run dev`
+4. Argus runs it, captures output, and writes a session log to `.argus-session.log` in that directory
+5. Ask questions while it runs, or after it exits (stats are shown automatically)
 
-### Log file analysis
+### Log files
 
-```
-1. Launch argus
-2. Select Log File
-3. Enter the file path: /var/log/nginx/error.log
-4. Choose tail lines or full file
-5. Query the logs
-```
+1. Launch `argus` and choose **Log File**
+2. Enter the path, for example `/var/log/nginx/error.log`
+3. Enter a line count, `all`, or press `f` for the full file
+4. Ask questions about the loaded logs
 
-### Preset commands
+### Commands
 
-| Command | What it does | LLM cost |
+| Command | What it does | LLM call? |
 |---|---|---|
-| `/stats` | Error counts, warn counts, error rate | Free — no LLM |
-| `/clear` | Clear conversation history | Free |
-| `/quit` | Exit Argus | Free |
+| `/stats` | Error, warning, and info counts and error rate | No |
+| `/clear` | Clear the Insights conversation | No |
+| `/quit` | Exit Argus | No |
 
----
+Anything else you type is sent to the assistant as a question.
 
-## Keybindings
+### Keybindings
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` | Scroll focused panel |
-| `tab` | Switch between log panel and answer panel |
-| `enter` | Submit query or confirm selection |
-| `esc` | Go back to previous screen |
+| `↑` `↓` `PgUp` `PgDn` | Scroll the focused pane |
+| `ctrl+u` / `ctrl+d` | Half-page scroll |
+| `tab` | Switch focus between logs and Insights |
+| `ctrl+f` | Toggle follow mode |
+| `end` | Jump to latest logs and resume following |
+| `enter` | Submit a query or confirm a selection |
+| `esc` | Go back |
 | `ctrl+c` | Quit from anywhere |
 
----
-
-## Why Go?
-
-The entire cloud-native toolchain — `kubectl`, `helm`, `k9s`, `lazygit`, `Prometheus` — is written in Go. There are good reasons:
-
-| Concern | Go advantage |
-|---|---|
-| Distribution | Single binary, no runtime, no JVM, no Python env needed |
-| Memory | ~15MB binary, under 30MB RAM at runtime |
-| Concurrency | Goroutines and channels make concurrent log streaming natural |
-| TUI ecosystem | Bubble Tea + Lipgloss is the best TUI stack in any language |
-| Ecosystem fit | CNCF-native, same toolchain as the infra it monitors |
-
-The same tool in Spring Boot would ship as a 200MB JAR requiring a JVM. In Node.js it would lack the TUI polish. Go was the right choice.
-
----
-
-## Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| Language | Go 1.22+ | Single binary, low RAM, CNCF-native |
-| TUI framework | Bubble Tea + Lipgloss | Same as k9s, lazygit — clean Elm architecture |
-| CLI framework | Cobra + Viper | Same as kubectl, Helm — industry standard |
-| AI SDK | Google GenAI Go SDK | Official SDK, supports all current Gemini models |
-| LLM | Gemini 2.5 Flash Lite | Fast, free tier, good reasoning for log analysis |
-| Markdown | Glamour | Same library as GitHub's Glow CLI |
-| Docker | docker/docker SDK | Official Go client |
-| Config | Viper | YAML + env var + flag merging with precedence |
+Inside the workspace, single letters are never bound to actions, so everything you type goes to the query bar. (The log file setup screen does accept `f` as a shortcut for "full file".)
 
 ---
 
 ## Architecture
 
-### Agent system
+### Agents as tools
 
-Argus uses an **agents-as-tools** pattern. The orchestrator is the conversational brain — it decides whether to answer directly from context or invoke a specialist agent:
+The orchestrator is the conversational brain. It reads the question, the conversation so far, and any memory context, then either answers directly or asks for a tool:
 
 ```
 User query
     │
     ▼
-Orchestrator (Gemini LLM + full conversation history)
+Orchestrator (Gemini + conversation history + memory context)
     │
-    ├── answer directly      → casual replies, follow-up questions
-    ├── log_analysis agent   → extract errors, patterns, anomalies
-    ├── rca agent            → root cause from log analysis output
-    └── stats agent          → counts and error rate (zero LLM cost)
+    ├── answer directly      casual replies, follow-ups
+    ├── log_analysis         extract errors, repeated failures, anomalies
+    ├── rca                  root cause from the analysis output
+    └── stats                counts and error rate (no LLM)
+    │
+    ▼
+Tool result is fed back to the orchestrator, which writes the final answer (streamed)
 ```
-
-Sub-agents are tools from the orchestrator's perspective. The orchestrator routes based on intent, dispatches the tool, then synthesizes the result into a natural conversational response — streamed token by token.
 
 ### Log pipeline
 
 ```
-Source (Docker / Process / File / k8s)
+Source (Docker / Process / File)
     │
     ▼
-Collector → normalized LogEntry{}
+Collector  → normalized LogEntry
     │
     ▼
-Scrubber → strips secrets, PII, tokens
+Scrubber   → redacts secrets and PII (before any LLM call)
     │
     ▼
-Summarizer → compresses large windows (~92% token reduction)
-    │
-    ▼
-Orchestrator → Agents → streamed answer
+Orchestrator → agents → streamed answer
 ```
 
-All sources produce the same `LogEntry` struct from `internals/types`. Agents never know whether logs came from Docker, a process, a file, or Kubernetes.
+Every source produces the same `LogEntry` (in `internal/types`), so agents never know whether logs came from Docker, a process, or a file.
 
-### TUI screen flow
+### TUI structure
+
+Each source screen (Docker, Process, File) embeds a shared `workspace.Core`. The core owns the log viewer, query bar, Insights pane, layout, and orchestrator wiring. Each screen only adds what is specific to its source, such as loading and streaming. A feature built once in the core works for all three sources.
 
 ```
-First run → Setup Wizard (API key + model choice)
+First run → Setup Wizard
     │
     ▼
-Welcome
+Welcome → Source Select
     │
-    ▼
-Source Select
-    │
-    ├── Docker  → Container Select → Chat
-    ├── Process → Command Input   → Process Chat
-    └── File    → File Setup      → File Chat
+    ├── Docker  → Container Select → Docker workspace
+    ├── Process → Command Input    → Process workspace
+    └── File    → File Setup       → File workspace
 ```
 
 ---
@@ -300,113 +293,125 @@ Source Select
 
 ```
 argus/
-├── main.go                              ← binary entrypoint (5 lines)
+├── main.go                       entrypoint
 ├── cmd/
-│   └── root.go                          ← Cobra root command, TUI launch
-├── internal/
-│   ├── config/
-│   │   └── config.go                    ← Viper loader, Save(), IsFirstRun()
-│   ├── pipeline/
-│   │   ├── scrubber.go                  ← strips secrets and PII before LLM
-│   │   └── summarizer.go                ← compresses large log windows
-│   ├── collectors/
-│   │   ├── docker/collector.go          ← Docker SDK, FetchLogs + Stream
-│   │   ├── process/process.go           ← exec runner, stdout/stderr capture
-│   │   └── file/file.go                 ← .log .txt JSON file reader
-│   └── tui/
-│       ├── app.go                       ← root Bubble Tea model, screen routing
-│       ├── screens/
-│       │   ├── setup_wizard.go          ← first-run API key + model wizard
-│       │   ├── welcome.go
-│       │   ├── source_select.go
-│       │   ├── container_select.go
-│       │   ├── chat.go                  ← Docker: log panel + query bar
-│       │   ├── process_setup.go         ← command input screen
-│       │   ├── process_chat.go          ← Process: log panel + query bar
-│       │   ├── file_setup.go            ← path input + lines choice
-│       │   ├── file_chat.go             ← File: log panel + query bar
-│       │   └── messages.go              ← screen transition message types
-│       ├── components/
-│       │   ├── log_viewer.go            ← scrollable color-coded log panel
-│       │   ├── query_bar.go             ← input with /command detection
-│       │   └── thinking.go              ← streaming agent events + fun verbs
-│       └── styles/
-│           └── theme.go                 ← all colors and styles — edit here only
-└── agents/
-    ├── types.go                         ← shared types, interfaces, event types
-    ├── gemini_agent.go                  ← Google GenAI SDK client, stream support
-    ├── orchestrator.go                  ← SRE brain, history, routing, tool dispatch
-    ├── log_analysis_agent.go            ← extracts errors and patterns
-    ├── rca_agent.go                     ← root cause from analysis output
-    └── stats_agent.go                   ← pure Go metrics, zero LLM cost
+│   └── root.go                   Cobra root command, TUI launch
+├── agents/
+│   ├── types.go                  shared types, interfaces, event types
+│   ├── gemini_agent.go           Google GenAI SDK client (Generate, Chat, ChatStream)
+│   ├── orchestrator_agent.go     routing, history, tool dispatch, streaming
+│   ├── log_analysis_agent.go
+│   ├── rca_agent.go
+│   └── stats_agent.go            pure Go, no LLM
+├── pipeline/
+│   └── scrubber.go               secret and PII redaction
+└── internal/
+    ├── types/types.go            LogEntry (shared, avoids import cycles)
+    ├── config/config.go          Viper loader, Save(), IsFirstRun()
+    ├── memory/                   agent.md and runbook context (experimental)
+    ├── collectors/
+    │   ├── docker/
+    │   │   ├── collector.go      list, fetch history, stream
+    │   │   └── metrics.go        CPU, memory, network, I/O, PIDs
+    │   ├── process/process.go    exec runner, stdout/stderr capture
+    │   └── file/file.go          .log / .txt / JSON reader
+    └── tui/
+        ├── app.go                root model, screen routing
+        ├── layout/               responsive layout math and chrome
+        ├── workspace/            shared core: state, query handling, view
+        ├── screens/              welcome, source select, setup, per-source chat
+        ├── components/           log viewer, query bar, thinking, metrics panel
+        └── styles/theme.go       all colors and styles in one place
 ```
 
 ---
 
 ## Design Decisions
 
-**Why the official Google GenAI SDK instead of LangChainGo?**
-LangChainGo's agent executor was unstable and used deprecated API endpoints. The official SDK is maintained by Google, always supports the latest models, and gives direct control over streaming and conversation history.
+**Official Google GenAI SDK instead of LangChainGo.** LangChainGo's agent executor was unstable and targeted deprecated endpoints. The official SDK tracks new models and gives direct control over streaming and history.
 
-**Why a manual routing loop instead of a framework?**
-The orchestrator asks Gemini "which tool is needed?" then dispatches and feeds results back for synthesis. This is more predictable, easier to debug, and cheaper than framework overhead — two LLM calls for a tool query vs one for a direct answer.
+**A hand-rolled orchestrator instead of a framework.** The model asks for a tool in a fixed format, Argus runs it, and the result goes back for synthesis. It is easy to debug and adds no framework overhead.
 
-**Why separate log and answer viewports?**
-Logs stream continuously and should auto-scroll. Answers are reference material you scroll back through. One panel for both meant they constantly fought each other.
+**Struct embedding for the shared workspace.** Docker, Process, and File screens had about 85% duplicated code. Embedding `workspace.Core` removed the duplication without changing how the root model routes screens.
 
-**Why token-based streaming for the final answer?**
-Same reason Claude Code and ChatGPT stream — it feels responsive immediately. The user sees tokens appearing rather than waiting 10 seconds for a full response.
+**Separate log and answer panes.** Logs stream continuously and should auto-scroll. Answers are reference material you scroll back through. One pane for both made them fight each other.
 
-**Why Gemini instead of Claude or GPT-4?**
-Free tier with no credit card required. Argus is a developer tool — adding a billing requirement on first run kills adoption. Multi-model support (Claude, Ollama for local) is planned via config.
+**No single-letter shortcuts.** Early versions bound `f`, `k`, `j`, and `g`, which made those letters impossible to type in the query bar. Shortcuts now use keys that can't be typed as text.
+
+**Gemini by default.** It has a free tier, so there's no billing step on first run. Support for other providers and local models is on the roadmap.
+
+---
+
+## Known Limitations
+
+- **High log volume.** The log viewer re-renders its full buffer on every new line, so very chatty sources can make the UI sluggish or unresponsive. A windowed (virtualized) log view is the planned fix.
+- **Metrics are Docker-only.** Process and file sources have no metrics yet.
+- **No Kubernetes support yet.**
+- **Prebuilt binaries cover Linux and Windows.** macOS is build-from-source.
+- **Scrubbing is best-effort.** See the note under Security.
+- **Early software (v0.x).** Expect rough edges.
 
 ---
 
 ## Roadmap
 
-- [x] Docker container log analysis
-- [x] Process log capture
-- [x] Log file ingestion (.log, .txt, JSON)
-- [x] Conversational AI with memory
-- [x] Token streaming responses
-- [x] Secret scrubbing pipeline
+**Done**
+- [x] Docker, Process, and Log file sources
+- [x] Conversational AI with tool routing and token streaming
+- [x] Secret scrubbing before LLM calls
 - [x] First-run setup wizard
-- [ ] implementing a metrics dashboard - via docker metrics/openTel/prometheous
-- [ ] Kubernetes pod log analysis (v0.2.0)
-- [ ] Local LLM via Ollama (no data leaves machine)
-- [ ] Multi-model support (Claude, GPT-4 via config)
-- [ ] `brew install argus` via Homebrew tap
-- [ ] GitHub Actions release pipeline
-- [ ] `/export` — save conversation to file
-- [ ] `argus watch` — daemon mode with anomaly alerts
+- [x] Responsive split-pane workspace with follow mode
+- [x] Live Docker metrics (CPU, memory, network, I/O, PIDs)
+- [x] Shared workspace core across all sources
+
+**Next**
+- [ ] Windowed log view for high-volume streams
+- [ ] Local insights in the Insights pane (error rate, top repeated errors, no LLM)
+- [ ] Aligned log columns (timestamp, level, source, message)
+- [ ] Log search and filtering
+- [ ] `?` shortcut overlay and command palette
+
+**Later**
+- [ ] Kubernetes pod logs (namespace and pod selectors)
+- [ ] Prometheus and OpenTelemetry detection for richer metrics
+- [ ] Log template parsing to cluster repeated lines and cut token usage
+- [ ] Episodic memory: remember past incidents and retrieve similar ones
+- [ ] Local LLM support via Ollama, and multi-model support
+- [ ] `/export` conversations and logs
+- [ ] Homebrew tap and a release pipeline with GitHub Actions
+- [ ] `argus watch` daemon mode with anomaly alerts
+
+---
+
+## Research and Inspiration
+
+The planned log-compression work draws on [LogParser-LLM](https://arxiv.org/abs/2408.13727), which combines a prefix parse tree with selective LLM calls to extract log templates cheaply. The UX takes cues from tools like k9s and lazygit.
 
 ---
 
 ## Contributing
 
-Pull requests are welcome. For major changes, open an issue first to discuss what you'd like to change.
+Pull requests are welcome. For larger changes, please open an issue first.
 
 ```bash
 git clone https://github.com/vishnuprasad2004/argus
 cd argus
 go mod tidy
-make run
+go run ./cmd/
 ```
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
-
----
+MIT. See [LICENSE](LICENSE).
 
 <!--
 NOTES FOR LATER EDITS:
-- Record demo GIF with vhs (https://github.com/charmbracelet/vhs) and add at top
-- Add binary size + RAM benchmark numbers after profiling
-- Add screenshots of wizard, source select, and chat screens
-- Add comparison table vs alternatives (stern, lnav, k9s) when ready
-- Add CONTRIBUTING.md with PR guidelines
-- Add brew tap instructions when GoReleaser is set up
+- Record a demo GIF with vhs (https://github.com/charmbracelet/vhs) and add it at the top
+- Add screenshots: setup wizard, source select, split workspace
+- Add binary size and RAM numbers after profiling
+- Remove "High log volume" from Known Limitations once the windowed log view ships
+- Add a comparison table vs stern, lnav, k9s
+- Add CONTRIBUTING.md
 -->
