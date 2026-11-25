@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,7 +48,7 @@ func (l *LogViewer) renderLogs() string {
         return styles.Muted.Render("No logs yet...")
     }
 
-    var out string
+    var out strings.Builder
     for _, entry := range l.logs {
         // timestamp — always muted grey
         ts := styles.Muted.Render(entry.Timestamp.Format("15:04:05"))
@@ -61,9 +62,16 @@ func (l *LogViewer) renderLogs() string {
         // message — colored by level
         msg := styles.LogStyle(entry.Level).Render(entry.Message)
 
-        out += fmt.Sprintf("%s  %s  %s  %s\n", ts, level, source, msg)
+        out.WriteString(ts)
+        out.WriteString("  ")
+        out.WriteString(level)
+        out.WriteString("  ")
+        out.WriteString(source)
+        out.WriteString("  ")
+        out.WriteString(msg)
+        out.WriteByte('\n')
     }
-    return out
+    return out.String()
 }
 
 func (l *LogViewer) Update(msg tea.Msg) tea.Cmd {
